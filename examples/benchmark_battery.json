@@ -1,0 +1,52 @@
+[
+  {
+    "task_id": "cell-local-smoke",
+    "difficulty": "easy",
+    "description": "A cell-local smoke task with repeated paired command runs.",
+    "seed_branch": "main",
+    "repeats": 2,
+    "baseline_commands": [
+      "python3 -c 'print(\"baseline-local\")'"
+    ],
+    "treatment_commands": [
+      "python3 -c 'print(\"treatment-local\")'"
+    ],
+    "acceptance_checks": [
+      "python3 -c 'print(\"accept-local\")'"
+    ]
+  },
+  {
+    "task_id": "multi-cell-governance-smoke",
+    "difficulty": "medium",
+    "description": "A starter boundary-sensitive task intended to represent a multi-cell or port-aware change.",
+    "seed_branch": "main",
+    "repeats": 2,
+    "baseline_commands": [
+      "python3 -c 'print(\"baseline-multicell\")'"
+    ],
+    "treatment_commands": [
+      "python3 -c 'print(\"treatment-multicell\")'"
+    ],
+    "acceptance_checks": [
+      "python3 -c 'print(\"accept-multicell\")'"
+    ]
+  },
+  {
+    "task_id": "proof-aware-governance-smoke",
+    "difficulty": "medium",
+    "description": "A conceptual starter task for treatment flows that incur extra proof or approval-oriented coordination.",
+    "seed_branch": "main",
+    "repeats": 2,
+    "baseline_commands": [
+      "python3 -c 'print(\"baseline-proof\")'"
+    ],
+    "treatment_commands": [
+      "python3 -c 'print(\"stage-proof\")'",
+      "python3 -c 'print(\"collect-proof\")'",
+      "python3 -c 'print(\"verify-proof\")'"
+    ],
+    "acceptance_checks": [
+      "python3 -c 'print(\"accept-proof\")'"
+    ]
+  }
+]

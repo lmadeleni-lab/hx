@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hx"
+version = "0.1.0"
+description = "Hexagonal cell + port governance harness for local coding agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  {name = "hx contributors"},
+]
+dependencies = [
+  "mcp>=1.8.0,<2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.4.0",
+  "hypothesis>=6.100.0",
+  "pytest>=8.0.0",
+  "ruff>=0.11.0",
+]
+
+[project.scripts]
+hx = "hx.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
