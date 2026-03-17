@@ -16,6 +16,27 @@ Install note:
 
 ## 1. Initialize the Repo
 
+The fastest path:
+
+```bash
+hx setup
+hx bootstrap
+```
+
+`hx setup` auto-detects your language, scaffolds all templates, builds the
+hexmap, validates topology, and suggests a policy mode. `hx bootstrap`
+generates `.claude/CLAUDE.md` and memory files so agents immediately
+understand your governance model.
+
+To check project health:
+
+```bash
+hx readiness
+hx suggest
+```
+
+### Manual initialization (alternative)
+
 ```bash
 hx init
 hx hex build
