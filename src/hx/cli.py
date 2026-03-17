@@ -559,6 +559,77 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_percolation(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.reasoning import percolation_status
+
+    with ui.activity(
+        "Checking percolation status",
+        success_message="Percolation check complete",
+    ):
+        status = percolation_status(root)
+
+    if args.json:
+        print(json.dumps(status, indent=2))
+    else:
+        if not status.get("available"):
+            print("No hexmap available.")
+            return 1
+        phase = status["global_phase"]
+        occ = status["global_occupation"]
+        threshold = status["threshold"]
+        print(f"Global occupation: {occ:.4f} / {threshold}")
+        print(f"Phase: {phase}")
+        print(f"Recommendation: {status['recommendation']}")
+        if status.get("parent_groups"):
+            print()
+            for pg in status["parent_groups"]:
+                print(
+                    f"  {pg['parent_id']}: occ={pg['occupation']:.4f} "
+                    f"bdry={pg['boundary_occupation']:.4f} "
+                    f"[{pg['phase']}]"
+                )
+    return 0
+
+
+def cmd_reasoning_gate(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.reasoning import reasoning_gate
+
+    hexmap = load_hexmap(root)
+    cell_id = args.cell or hexmap.cells[0].cell_id
+
+    with ui.activity(
+        "Evaluating reasoning gate",
+        success_message="Reasoning gate evaluated",
+    ):
+        result = reasoning_gate(root, cell_id, args.radius)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Mode: {result['mode']}")
+        print(f"Justification: {result['justification']}")
+        signals = result["signals"]
+        print("Signals:")
+        print(f"  occupation: {signals.get('occupation_fraction', '?')}")
+        print(f"  pressure:   {signals.get('boundary_pressure', '?')}")
+        print(f"  max risk:   {signals.get('max_port_risk', '?')}")
+        print(f"  hot edges:  {signals.get('hot_edge_count', 0)}")
+        if result["hot_edges"]:
+            print("Hot edges:")
+            for e in result["hot_edges"][:5]:
+                print(
+                    f"  {e['from']}->{e['to']} "
+                    f"risk={e['risk']:.3f} weight={e['weight']:.2f}"
+                )
+    return 0
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -832,6 +903,22 @@ def build_parser() -> argparse.ArgumentParser:
     suggest_parser.add_argument("-n", type=int, default=5)
     suggest_parser.add_argument("--json", action="store_true")
     suggest_parser.set_defaults(func=cmd_suggest)
+
+    percolation_parser = subparsers.add_parser(
+        "percolation", help="Real-time percolation status monitor",
+    )
+    percolation_parser.add_argument("--json", action="store_true")
+    percolation_parser.set_defaults(func=cmd_percolation)
+
+    gate_parser = subparsers.add_parser(
+        "gate", help="Evaluate reasoning gate (local/scoped/full/escalate)",
+    )
+    gate_parser.add_argument(
+        "--cell", default=None, help="Active cell ID",
+    )
+    gate_parser.add_argument("--radius", type=int, default=1)
+    gate_parser.add_argument("--json", action="store_true")
+    gate_parser.set_defaults(func=cmd_reasoning_gate)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")

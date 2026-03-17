@@ -10,6 +10,12 @@ from hx.authz import allowed_cells as calc_allowed_cells
 from hx.config import ensure_hx_dirs
 from hx.hexmap import adjacency_summary, load_hexmap
 from hx.memory import load_memory_context
+from hx.reasoning import (
+    ReasoningMode,
+    build_scoped_prompt,
+    check_feedback_integrity,
+    reasoning_gate,
+)
 from hx.stream import StreamRenderer
 from hx.tools import ToolRegistry
 
@@ -167,7 +173,35 @@ def run_agent(
 
     client = anthropic.Anthropic(api_key=api_key)
     tools = registry.anthropic_tool_schemas()
-    system_prompt = _build_system_prompt(registry, active_cell_id, radius)
+
+    # Reasoning gate: decide LLM consultation strategy
+    gate = reasoning_gate(root, active_cell_id, radius)
+    gate_mode = gate["mode"]
+    append_event(root, audit_run.run_id, "reasoning.gate", gate)
+
+    if gate_mode == ReasoningMode.ESCALATE.value:
+        renderer.error(
+            f"Reasoning gate: ESCALATE — {gate['justification']}"
+        )
+        finish_run(root, audit_run.run_id, "escalated")
+        return {
+            "status": "escalated",
+            "audit_run_id": audit_run.run_id,
+            "reasoning_gate": gate,
+            "tool_calls": 0,
+            "turns": 0,
+        }
+
+    # Build prompt based on reasoning mode
+    if gate_mode == ReasoningMode.LLM_SCOPED.value:
+        system_prompt = build_scoped_prompt(
+            root, active_cell_id, radius,
+            gate["hot_edges"], task_description,
+        )
+    else:
+        system_prompt = _build_system_prompt(
+            registry, active_cell_id, radius,
+        )
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": task_description},
@@ -316,6 +350,33 @@ def run_agent(
                     })
 
                 messages.append({"role": "user", "content": tool_results})
+
+                # Feedback integrity: check holonomy on affected ports
+                affected_ports = []
+                for block in tool_use_blocks:
+                    name = block.name.replace("_", ".")
+                    if name in ("port.check", "repo.commit_patch"):
+                        args = block.input or {}
+                        if args.get("task_id"):
+                            try:
+                                from hx.repo_ops import load_task
+                                task = load_task(root, args["task_id"])
+                                for p in task.port_check.get(
+                                    "impacted_ports", [],
+                                ):
+                                    affected_ports.append(p.get("port_id"))
+                            except Exception:
+                                pass
+                if affected_ports:
+                    integrity = check_feedback_integrity(
+                        root, affected_ports,
+                    )
+                    if integrity:
+                        append_event(
+                            root, audit_run.run_id,
+                            "feedback.integrity_warning",
+                            {"warnings": integrity},
+                        )
 
     except KeyboardInterrupt:
         status = "interrupted"
