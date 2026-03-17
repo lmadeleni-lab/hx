@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,17 @@ from pathlib import Path
 import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+
+def _result_data(result):
+    """Extract structured data from a CallToolResult.
+
+    Newer MCP SDK versions return None for structuredContent and put
+    JSON in content[0].text instead.
+    """
+    if result.structuredContent is not None:
+        return result.structuredContent
+    return json.loads(result.content[0].text)
 
 
 @pytest.fixture
@@ -61,7 +73,7 @@ async def test_mcp_stdio_end_to_end(tmp_path: Path) -> None:
                 "hex.allowed_cells",
                 {"active_cell_id": "src", "radius": 0},
             )
-            assert allowed.structuredContent == {"cells": ["src"]}
+            assert _result_data(allowed) == {"cells": ["src"]}
 
             repo_read = await session.call_tool(
                 "repo.read",
@@ -71,11 +83,12 @@ async def test_mcp_stdio_end_to_end(tmp_path: Path) -> None:
                     "path": "src/demo.py",
                 },
             )
-            assert repo_read.structuredContent["path"] == "src/demo.py"
-            assert 'print("hello")' in repo_read.structuredContent["content"]
+            repo_data = _result_data(repo_read)
+            assert repo_data["path"] == "src/demo.py"
+            assert 'print("hello")' in repo_data["content"]
 
             parent_groups = await session.call_tool("hex.parent_groups", {})
-            assert parent_groups.structuredContent["parents"]
+            assert _result_data(parent_groups)["parents"]
 
             parent_resource = await session.read_resource("hx://parent_groups")
             assert "parent_id" in parent_resource.contents[0].text

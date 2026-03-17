@@ -469,6 +469,70 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        ui.note("Set ANTHROPIC_API_KEY environment variable to use hx run", level="error")
+        return 1
+
+    # Resolve cell from CWD or --cell
+    if args.cell:
+        active_cell_id = args.cell
+    else:
+        hexmap = load_hexmap(root)
+        try:
+            cwd_rel = str(Path.cwd().relative_to(root))
+        except ValueError:
+            cwd_rel = ""
+        from hx.hexmap import resolve_cell_id as resolve_cid
+
+        active_cell_id = resolve_cid(hexmap, cwd_rel) if cwd_rel else None
+        if active_cell_id is None and hexmap.cells:
+            active_cell_id = hexmap.cells[0].cell_id
+        if active_cell_id is None:
+            ui.note("Could not resolve active cell", level="error")
+            return 1
+
+    from hx.agent import run_agent
+
+    result = run_agent(
+        root,
+        args.task,
+        active_cell_id=active_cell_id,
+        radius=args.radius,
+        model=args.model,
+        max_turns=args.max_turns,
+        color=ui.color,
+        api_key=api_key,
+    )
+    return 0 if result.get("status") == "ok" else 1
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.status import gather_status, render_status
+
+    if args.json:
+        data = gather_status(root)
+        # Serialize AuditRun objects
+        data["recent_runs"] = [
+            {"run_id": r.run_id, "command": r.command, "status": r.status}
+            for r in data["recent_runs"]
+        ]
+        data["open_runs"] = [
+            {"run_id": r.run_id, "command": r.command}
+            for r in data["open_runs"]
+        ]
+        print(json.dumps(data, indent=2))
+    else:
+        print(render_status(root, color=ui.color))
+    return 0
+
+
 def cmd_mcp_serve(args: argparse.Namespace) -> int:
     from hx.mcp_server import create_server_with_options
 
@@ -579,6 +643,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="suppress the macOS terminal startup screen in interactive help output",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    run_parser = subparsers.add_parser("run", help="Run a governed agent task")
+    run_parser.add_argument("task", help="Task description in natural language")
+    run_parser.add_argument(
+        "--cell", default=None, help="Override active cell (auto-resolved from CWD)",
+    )
+    run_parser.add_argument("--radius", type=int, default=1)
+    run_parser.add_argument("--model", default="claude-sonnet-4-20250514")
+    run_parser.add_argument("--max-turns", type=int, default=50)
+    run_parser.set_defaults(func=cmd_run)
+
+    status_parser = subparsers.add_parser("status", help="Show governance status dashboard")
+    status_parser.add_argument("--json", action="store_true")
+    status_parser.set_defaults(func=cmd_status)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")
