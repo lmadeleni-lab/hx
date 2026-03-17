@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from hx.agent import _build_system_prompt, _safe_args
+from hx.agent import _build_system_prompt, _memory_section, _safe_args
+from hx.memory import load_memory_context
 from hx.stream import StreamRenderer, _compact_args, _compact_result
 from hx.templates import policy_toml, starter_hexmap
 from hx.tools import ToolRegistry
@@ -70,3 +71,62 @@ class TestStreamRenderer:
         # Simulate EOF on stdin
         with patch("builtins.input", side_effect=EOFError):
             assert renderer.approval_prompt(["breaking change"]) is False
+
+
+class TestMemoryInjection:
+    def test_prompt_includes_memory_when_state_exists(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        # Write a fake repo_summary state file
+        state_dir = tmp_path / ".hx" / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        (state_dir / "repo_summary.json").write_text(json.dumps({
+            "top_risky_ports": [
+                {"port_id": "src[0]->tests", "policy_risk_score": 0.8}
+            ],
+            "recommended_next_actions": ["Fix risky port src[0]->tests."],
+        }))
+        registry = ToolRegistry(tmp_path)
+        prompt = _build_system_prompt(registry, "root", 1)
+        assert "Memory Context" in prompt
+        assert "src[0]->tests" in prompt
+
+    def test_prompt_omits_memory_on_first_run(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        registry = ToolRegistry(tmp_path)
+        prompt = _build_system_prompt(registry, "root", 1)
+        assert "Memory Context" not in prompt
+
+    def test_load_memory_context_empty_when_no_files(self, tmp_path: Path) -> None:
+        (tmp_path / ".hx" / "state").mkdir(parents=True, exist_ok=True)
+        assert load_memory_context(tmp_path) == ""
+
+    def test_load_memory_context_truncates(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".hx" / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        # Create large state to test truncation
+        (state_dir / "repo_summary.json").write_text(json.dumps({
+            "top_risky_ports": [
+                {"port_id": f"port_{i}", "policy_risk_score": 0.9}
+                for i in range(100)
+            ],
+            "recommended_next_actions": [f"Action {i}" for i in range(100)],
+        }))
+        (state_dir / "open_threads.json").write_text(json.dumps({
+            "failed_runs": [
+                {"run_id": f"run_{i}", "command": "hx.run", "active_cell_id": "x"}
+                for i in range(100)
+            ],
+            "pending_tasks": [
+                {"task_id": f"task_{i}", "active_cell_id": "y", "requires_approval": True}
+                for i in range(100)
+            ],
+        }))
+        result = load_memory_context(tmp_path, max_chars=200)
+        assert len(result) <= 200
+
+    def test_memory_section_helper(self, tmp_path: Path) -> None:
+        (tmp_path / ".hx" / "state").mkdir(parents=True, exist_ok=True)
+        # No state files = empty section
+        assert _memory_section(tmp_path) == ""
