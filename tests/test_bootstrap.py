@@ -39,6 +39,26 @@ def test_bootstrap_creates_claude_dir(tmp_path: Path) -> None:
     assert (tmp_path / ".claude" / "CLAUDE.md").exists()
 
 
+def test_bootstrap_creates_claude_settings(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    result = run_bootstrap(tmp_path)
+    assert ".claude/settings.json" in result["files_written"]
+    settings = (tmp_path / ".claude" / "settings.json").read_text()
+    import json
+    data = json.loads(settings)
+    assert "hx" in data["mcpServers"]
+    assert "mcp" in data["mcpServers"]["hx"]["args"]
+
+
+def test_bootstrap_creates_gemini_md(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    result = run_bootstrap(tmp_path)
+    assert "GEMINI.md" in result["files_written"]
+    content = (tmp_path / "GEMINI.md").read_text()
+    assert "hx" in content
+    assert "hex.context" in content
+
+
 def test_bootstrap_creates_memory_files(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     result = run_bootstrap(tmp_path)

@@ -204,6 +204,78 @@ context derived from the current HEXMAP and POLICY.
     )
 
 
+def generate_claude_settings(root: Path) -> str:
+    """Generate .claude/settings.json for MCP server auto-discovery."""
+    import json
+    import shutil
+    import sys
+
+    hx_cmd = shutil.which("hx")
+    if not hx_cmd:
+        candidate = Path(sys.executable).resolve().with_name("hx")
+        hx_cmd = str(candidate) if candidate.exists() else "hx"
+
+    settings = {
+        "mcpServers": {
+            "hx": {
+                "command": hx_cmd,
+                "args": [
+                    "--root", str(root.resolve()),
+                    "mcp", "serve", "--transport", "stdio",
+                ],
+            },
+        },
+    }
+    return json.dumps(settings, indent=2) + "\n"
+
+
+def generate_gemini_md(
+    hexmap: HexMap, policy: dict[str, Any],
+) -> str:
+    """Generate GEMINI.md with project instructions for Gemini CLI."""
+    mode = current_mode(policy)
+    cell_lines = []
+    for cell in hexmap.cells:
+        paths = ", ".join(cell.paths)
+        cell_lines.append(f"- **{cell.cell_id}**: {cell.summary} ({paths})")
+    cells_section = "\n".join(cell_lines) if cell_lines else "- (single cell)"
+
+    commands = policy.get("commands", {}).get("allowed_prefixes", [])
+
+    return f"""# GEMINI.md
+
+This repository uses **hx** hexagonal governance.
+
+## How to Work in This Repo
+
+1. Connect to the hx MCP server (should be auto-configured)
+2. Use `hex.resolve_cell` to find which cell owns a file
+3. Use `hex.context` to understand the scope (starts in summary mode)
+4. Keep changes within the active cell and allowed radius
+5. Stage patches with `repo.stage_patch` before committing
+6. Run `port.check` for boundary impact analysis
+7. Run `proof.collect` and `proof.verify` before `repo.commit_patch`
+
+## Governance Mode: {mode}
+
+## Cells
+
+{cells_section}
+
+## Allowed Commands
+
+{chr(10).join(f'- `{cmd}`' for cmd in commands)}
+
+## Tips
+
+- Use `hex.context` with `detail='summary'` first (saves tokens)
+- Use `repo.read` with `offset`/`limit` for large files
+- Use `repo.search` with `max_results` to limit results
+- Breaking changes require human approval
+- Every action is audited
+"""
+
+
 def _write_if_missing(
     path: Path, content: str, *, force: bool = False,
 ) -> bool:
@@ -274,6 +346,18 @@ def run_bootstrap(
         memory_dir / "governance-rules.md", content, force=force,
     ):
         files_written.append(".claude/memory/governance-rules.md")
+
+    # .claude/settings.json — Claude Code MCP auto-discovery
+    settings = generate_claude_settings(root)
+    if _write_if_missing(
+        claude_dir / "settings.json", settings, force=force,
+    ):
+        files_written.append(".claude/settings.json")
+
+    # GEMINI.md — Gemini agent instructions
+    gemini_md = generate_gemini_md(hexmap, policy)
+    if _write_if_missing(root / "GEMINI.md", gemini_md, force=force):
+        files_written.append("GEMINI.md")
 
     # Update AGENTS.md with bootstrap section
     agents_path = root / "AGENTS.md"
