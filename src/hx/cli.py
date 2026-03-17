@@ -630,6 +630,86 @@ def cmd_reasoning_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_samples(args: argparse.Namespace) -> int:
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.planner import render_samples
+    print(render_samples(color=ui.color))
+    return 0
+
+
+def cmd_plan_create(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.planner import create_plan, render_plan
+
+    steps: list[dict] = []
+    for i, desc in enumerate(args.step or []):
+        cell = None
+        radius = 1
+        depends_on: list[int] = []
+        # Parse --step-cell and --step-after if provided
+        if args.step_cell and i < len(args.step_cell):
+            cell = args.step_cell[i]
+        if args.step_after and i < len(args.step_after):
+            depends_on = [int(x) for x in args.step_after[i].split(",") if x]
+        steps.append({
+            "description": desc,
+            "cell": cell,
+            "radius": radius,
+            "depends_on": depends_on,
+        })
+
+    if not steps:
+        ui.note(
+            "No steps provided. Use --step 'description' (repeatable).\n"
+            "  Example: hx plan create 'Migrate to v2' "
+            "--step 'Update models' --step 'Add tests'",
+            level="error",
+        )
+        return 1
+
+    try:
+        plan = create_plan(root, args.goal, steps)
+    except ValueError as exc:
+        ui.note(str(exc), level="error")
+        return 1
+
+    print(render_plan(plan, color=ui.color))
+    return 0
+
+
+def cmd_plan_show(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.planner import load_plan, render_plan
+
+    plan = load_plan(root)
+    if plan is None:
+        ui.note("No active plan. Create one with `hx plan create`.", level="error")
+        return 1
+
+    if args.json:
+        print(json.dumps(plan, indent=2))
+    else:
+        print(render_plan(plan, color=ui.color))
+    return 0
+
+
+def cmd_plan_advance(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.planner import advance_plan, render_plan
+
+    try:
+        plan = advance_plan(root, args.step, status=args.status)
+    except (RuntimeError, ValueError) as exc:
+        ui.note(str(exc), level="error")
+        return 1
+
+    print(render_plan(plan, color=ui.color))
+    return 0
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -695,7 +775,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     ui = TerminalUI(mode=args.ui_mode)
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        ui.note("Set ANTHROPIC_API_KEY environment variable to use hx run", level="error")
+        ui.note(
+            "ANTHROPIC_API_KEY not set. To use hx run:\n"
+            "  1. Get an API key at https://console.anthropic.com/\n"
+            "  2. export ANTHROPIC_API_KEY='sk-ant-...'\n"
+            "  3. Re-run your command",
+            level="error",
+        )
         return 1
 
     # Resolve cell from CWD or --cell
@@ -713,7 +799,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         if active_cell_id is None and hexmap.cells:
             active_cell_id = hexmap.cells[0].cell_id
         if active_cell_id is None:
-            ui.note("Could not resolve active cell", level="error")
+            cell_ids = [c.cell_id for c in hexmap.cells] if hexmap.cells else []
+            ui.note(
+                "Could not resolve active cell from current directory.\n"
+                f"  Available cells: {', '.join(cell_ids) or 'none'}\n"
+                "  Use --cell <cell_id> to specify explicitly.\n"
+                "  Run `hx hex show <cell_id>` to inspect a cell.",
+                level="error",
+            )
             return 1
 
     from hx.agent import run_agent
@@ -919,6 +1012,43 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--radius", type=int, default=1)
     gate_parser.add_argument("--json", action="store_true")
     gate_parser.set_defaults(func=cmd_reasoning_gate)
+
+    samples_parser = subparsers.add_parser(
+        "samples", help="Show sample task prompts for hx run",
+    )
+    samples_parser.set_defaults(func=cmd_samples)
+
+    plan_parser = subparsers.add_parser(
+        "plan", help="Multi-step task planning",
+    )
+    plan_sub = plan_parser.add_subparsers(dest="plan_command", required=True)
+
+    plan_create = plan_sub.add_parser("create", help="Create a task plan")
+    plan_create.add_argument("goal", help="Overall goal description")
+    plan_create.add_argument(
+        "--step", action="append", help="Step description (repeatable)",
+    )
+    plan_create.add_argument(
+        "--step-cell", action="append",
+        help="Cell for corresponding step (repeatable)",
+    )
+    plan_create.add_argument(
+        "--step-after", action="append",
+        help="Dependencies as comma-separated step indices (repeatable)",
+    )
+    plan_create.set_defaults(func=cmd_plan_create)
+
+    plan_show = plan_sub.add_parser("show", help="Show current plan")
+    plan_show.add_argument("--json", action="store_true")
+    plan_show.set_defaults(func=cmd_plan_show)
+
+    plan_advance = plan_sub.add_parser("advance", help="Mark step as done")
+    plan_advance.add_argument("step", type=int, help="Step index")
+    plan_advance.add_argument(
+        "--status", default="completed",
+        help="Status to set (default: completed)",
+    )
+    plan_advance.set_defaults(func=cmd_plan_advance)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")

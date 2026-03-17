@@ -38,13 +38,28 @@ def authorize_path(
     _ = root
     rel = str(Path(path))
     if not path_allowed(policy, rel):
-        raise AuthorizationError(f"Path denied by policy sandbox: {rel}")
+        sandbox = policy.get("path_sandbox", {})
+        denylist = sandbox.get("denylist", [])
+        raise AuthorizationError(
+            f"Path denied by policy sandbox: {rel}. "
+            f"Check POLICY.toml [path_sandbox] denylist: {denylist}"
+        )
     cell_id = resolve_cell_id(hexmap, rel)
     if cell_id is None:
-        raise AuthorizationError(f"Path is outside the declared hexmap: {rel}")
-    if cell_id not in allowed_cells(hexmap, active_cell_id, radius):
+        cell_ids = [c.cell_id for c in hexmap.cells]
         raise AuthorizationError(
-            f"Path {rel} belongs to cell {cell_id}, outside allowed radius from {active_cell_id}"
+            f"Path '{rel}' is outside the declared hexmap. "
+            f"Known cells: {', '.join(cell_ids)}. "
+            f"Run `hx hex build` to regenerate the hexmap."
+        )
+    allowed = allowed_cells(hexmap, active_cell_id, radius)
+    if cell_id not in allowed:
+        raise AuthorizationError(
+            f"Path '{rel}' belongs to cell '{cell_id}', outside "
+            f"allowed radius R{radius} from '{active_cell_id}'. "
+            f"Allowed cells: {', '.join(allowed)}. "
+            f"Use --radius {radius + 1} or --cell {cell_id} "
+            f"to expand scope."
         )
     return cell_id
 
