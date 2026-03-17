@@ -158,6 +158,25 @@ def resolve_cell_id(hexmap: HexMap, rel_path: str) -> str | None:
     return None
 
 
+def _is_connected(hexmap: HexMap, cell_ids: list[str] | None = None) -> bool:
+    """Check if the given cells (or all cells) form a connected subgraph."""
+    ids = cell_ids or [c.cell_id for c in hexmap.cells]
+    if len(ids) <= 1:
+        return True
+    id_set = set(ids)
+    visited: set[str] = set()
+    queue = [ids[0]]
+    visited.add(ids[0])
+    while queue:
+        current = queue.pop()
+        cell = hexmap.cell(current)
+        for neighbor in cell.neighbors:
+            if neighbor in id_set and neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+    return visited == id_set
+
+
 def validate_hexmap(root: Path, hexmap: HexMap) -> list[str]:
     errors: list[str] = []
     cell_ids = {cell.cell_id for cell in hexmap.cells}
@@ -191,5 +210,19 @@ def validate_hexmap(root: Path, hexmap: HexMap) -> list[str]:
                     symmetric = cell.cell_id in other.neighbors
                 if not symmetric:
                     errors.append(f"{cell.cell_id}: neighbor {neighbor} is not symmetric")
+    # Graph connectivity check
+    if len(hexmap.cells) > 1 and not _is_connected(hexmap):
+        errors.append("hexmap graph is not connected")
+
+    # Occupation fraction warning (hex percolation threshold)
+    from hx.metrics import HEX_PERCOLATION_THRESHOLD, occupation_fraction
+    occ = occupation_fraction(hexmap)
+    if occ > HEX_PERCOLATION_THRESHOLD:
+        errors.append(
+            f"port occupation fraction {occ} exceeds hex percolation "
+            f"threshold {HEX_PERCOLATION_THRESHOLD} — governance "
+            f"boundaries may not contain changes"
+        )
+
     errors.extend(validate_parent_groups(hexmap))
     return errors

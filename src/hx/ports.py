@@ -220,6 +220,132 @@ def port_surface(root: Path, hexmap: HexMap, cell_id: str, side_index: int) -> d
     return surface
 
 
+def find_triangles(hexmap: HexMap) -> list[tuple[str, str, str]]:
+    """Find all triangular cycles (A,B,C) in the hex neighbor graph."""
+    triangles: list[tuple[str, str, str]] = []
+    cell_ids = sorted(c.cell_id for c in hexmap.cells)
+    id_set = set(cell_ids)
+    seen: set[tuple[str, ...]] = set()
+
+    for a in cell_ids:
+        a_neighbors = {
+            n for n in hexmap.cell(a).neighbors if n is not None and n in id_set
+        }
+        for b in a_neighbors:
+            b_neighbors = {
+                n for n in hexmap.cell(b).neighbors
+                if n is not None and n in id_set
+            }
+            common = a_neighbors & b_neighbors
+            for c in common:
+                tri = tuple(sorted([a, b, c]))
+                if tri not in seen:
+                    seen.add(tri)
+                    triangles.append((tri[0], tri[1], tri[2]))
+    return triangles
+
+
+def _find_port_between(
+    hexmap: HexMap, from_cell: str, to_cell: str,
+) -> Port | None:
+    """Find the port on from_cell that faces to_cell."""
+    cell = hexmap.cell(from_cell)
+    for i, neighbor in enumerate(cell.neighbors):
+        if neighbor == to_cell:
+            port = cell.ports[i] if i < len(cell.ports) else None
+            return port
+    return None
+
+
+def dual_port_check(
+    hexmap: HexMap, cell_id: str, side_index: int,
+) -> list[str]:
+    """Check port duality: if A exports X to B, B should see X.
+
+    Returns list of warning strings.
+    """
+    warnings: list[str] = []
+    cell = hexmap.cell(cell_id)
+    port = cell.ports[side_index] if side_index < len(cell.ports) else None
+    neighbor_id = cell.neighbors[side_index]
+    if port is None or neighbor_id is None:
+        return warnings
+
+    exports = set(port.surface.declared_exports)
+    if not exports:
+        return warnings
+
+    # Find the reverse port on the neighbor
+    reverse_port = _find_port_between(hexmap, neighbor_id, cell_id)
+    if reverse_port is None:
+        return warnings
+
+    # Check that the neighbor's port acknowledges these exports
+    neighbor_exports = set(reverse_port.surface.declared_exports)
+    # If the neighbor also declares exports, check for conflicts
+    # (both sides exporting the same symbol = potential conflict)
+    overlap = exports & neighbor_exports
+    if overlap and port.direction == "export" and reverse_port.direction == "export":
+        warnings.append(
+            f"{cell_id}[{side_index}]<->{neighbor_id}: "
+            f"both sides export {sorted(overlap)} — "
+            f"potential non-orientable boundary"
+        )
+    return warnings
+
+
+def holonomy_check(
+    hexmap: HexMap,
+    cycle: tuple[str, ...],
+) -> list[str]:
+    """Check export consistency around a cycle of cells.
+
+    For a cycle (A, B, C), verifies that port contracts compose
+    consistently. Returns warning strings (empty = consistent).
+    """
+    warnings: list[str] = []
+    if len(cycle) < 3:
+        return warnings
+
+    # Collect exports along each edge of the cycle
+    edge_exports: list[set[str]] = []
+    for i in range(len(cycle)):
+        from_cell = cycle[i]
+        to_cell = cycle[(i + 1) % len(cycle)]
+        port = _find_port_between(hexmap, from_cell, to_cell)
+        if port is not None:
+            edge_exports.append(set(port.surface.declared_exports))
+        else:
+            edge_exports.append(set())
+
+    # Check: symbols that enter the cycle should be available
+    # throughout. If A exports {x} to B, and B exports {y} to C,
+    # but C exports {x} back to A without B ever seeing {x},
+    # that's a holonomy violation.
+    all_exports = [e for e in edge_exports if e]
+    if len(all_exports) < 2:
+        return warnings
+
+    # Simple holonomy: check that each edge's exports are a subset
+    # of what the previous edge makes available (transitivity)
+    for i in range(len(cycle)):
+        current = edge_exports[i]
+        next_edge = edge_exports[(i + 1) % len(cycle)]
+        if current and next_edge:
+            lost = current - next_edge
+            # Symbols exported at one edge but not the next
+            # may indicate a contract gap (not necessarily fatal)
+            if lost and len(lost) < len(current):
+                from_cell = cycle[i]
+                mid_cell = cycle[(i + 1) % len(cycle)]
+                to_cell = cycle[(i + 2) % len(cycle)]
+                warnings.append(
+                    f"holonomy: {from_cell}->{mid_cell}->{to_cell}: "
+                    f"exports {sorted(lost)} not propagated"
+                )
+    return warnings
+
+
 def _surface_categories(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     categories: list[str] = []
     before_exports = set(before.get("exports", []))

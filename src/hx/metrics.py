@@ -15,18 +15,30 @@ PORT_HISTORY = "port_history.json"
 CHANGE_CATEGORY_COUNT = 6
 CHURN_HALF_LIFE_DAYS = 30.0
 CHURN_DECAY_LAMBDA = math.log(2) / CHURN_HALF_LIFE_DAYS
+
+# Hex lattice percolation threshold (exact for site percolation)
+HEX_PERCOLATION_THRESHOLD = 0.5
+
 ARCHITECTURE_POTENTIAL_WEIGHTS = {
-    "boundary_pressure": 0.3,
-    "port_entropy": 0.2,
-    "port_churn": 0.15,
+    "boundary_pressure": 0.25,
+    "port_entropy": 0.15,
+    "port_churn": 0.1,
     "propagation_depth": 0.15,
     "approval_rate": 0.1,
     "proof_burden": 0.1,
+    "entropy_churn_interaction": 0.15,
 }
 ARCHITECTURE_POTENTIAL_SCALES = {
     "boundary_pressure": 6.0,
     "port_churn": 3.0,
     "proof_burden": 4.0,
+}
+
+# Normalization scales for policy_risk_score components
+RISK_NORMALIZATION_SCALES = {
+    "churn": 5.0,
+    "pressure": 20.0,
+    "failures": 5.0,
 }
 
 
@@ -44,6 +56,57 @@ def load_port_history(root: Path) -> dict[str, Any]:
 
 def save_port_history(root: Path, data: dict[str, Any]) -> None:
     _history_path(root).write_text(json.dumps(data, indent=2) + "\n")
+
+
+def hex_isoperimetric_bound(n: int) -> float:
+    """Minimum boundary size for n cells in a hex lattice.
+
+    For the optimal (compact) arrangement, boundary ~ 6*sqrt(n/3).
+    """
+    if n <= 0:
+        return 0.0
+    if n == 1:
+        return 6.0
+    r = math.sqrt(n / 3.0)
+    return round(6.0 * r, 3)
+
+
+def occupation_fraction(hexmap: Any) -> float:
+    """Fraction of port slots occupied by non-None ports across all cells."""
+    total_slots = 0
+    occupied = 0
+    for cell in hexmap.cells:
+        for port in cell.ports:
+            total_slots += 1
+            if port is not None:
+                occupied += 1
+    if total_slots == 0:
+        return 0.0
+    return round(occupied / total_slots, 4)
+
+
+def _port_edge_weight(
+    port_history: dict[str, Any], port_id: str | None,
+) -> float:
+    """Compute information-weighted edge cost for a boundary port.
+
+    Combines port entropy and churn into a single weight.
+    Falls back to 1.0 for ports without history.
+    """
+    if port_id is None:
+        return 1.0
+    entry = port_history.get(port_id)
+    if entry is None:
+        return 1.0
+    changes = entry.get("changes", [])
+    if not changes:
+        return 1.0
+    category_events = [c.get("categories", []) for c in changes]
+    entropy = _normalized_entropy(category_events)
+    churn = _decayed_churn(changes)
+    churn_norm = min(churn / 5.0, 1.0)
+    # Weight: base 1.0 + entropy contribution + churn contribution
+    return round(1.0 + entropy + churn_norm, 4)
 
 
 def _now_iso() -> str:
@@ -132,6 +195,7 @@ def _boundary_pressure_heuristic(task: dict[str, Any]) -> float:
 
 
 def boundary_pressure(root: Path, task: dict[str, Any]) -> float:
+    """Information-weighted boundary pressure normalized against hex isoperimetric bound."""
     try:
         hexmap = load_hexmap(root)
     except HexMapError:
@@ -148,12 +212,17 @@ def boundary_pressure(root: Path, task: dict[str, Any]) -> float:
     if not known_active_cells:
         return _boundary_pressure_heuristic(task)
 
+    # Load port history for information-weighted edges
+    history = load_port_history(root)
+
     cut_weight = 0.0
     for cell_id in known_active_cells:
         cell = hexmap.cell(cell_id)
-        for neighbor in cell.neighbors:
+        for i, neighbor in enumerate(cell.neighbors):
             if neighbor is not None and neighbor not in active_set:
-                cut_weight += 1.0
+                port = cell.ports[i] if i < len(cell.ports) else None
+                port_id = port.port_id if port else None
+                cut_weight += _port_edge_weight(history, port_id)
     return round(cut_weight, 3)
 
 
@@ -231,22 +300,29 @@ def _task_architecture_potential(
 ) -> tuple[float, dict[str, float]]:
     proof_burden = _proof_burden(task)
     radius = float(task.get("radius", 0) or 0)
+    entropy_val = round(float(metrics.get("port_entropy", 0.0)), 4)
+    churn_val = _bounded_ratio(
+        float(metrics.get("port_churn", 0.0)),
+        ARCHITECTURE_POTENTIAL_SCALES["port_churn"],
+    )
     components = {
         "boundary_pressure": _bounded_ratio(
             float(metrics.get("boundary_pressure", 0.0)),
             ARCHITECTURE_POTENTIAL_SCALES["boundary_pressure"],
         ),
-        "port_entropy": round(float(metrics.get("port_entropy", 0.0)), 4),
-        "port_churn": _bounded_ratio(
-            float(metrics.get("port_churn", 0.0)),
-            ARCHITECTURE_POTENTIAL_SCALES["port_churn"],
-        ),
+        "port_entropy": entropy_val,
+        "port_churn": churn_val,
         "propagation_depth": round(radius / (1.0 + radius), 4),
-        "approval_rate": 1.0 if task.get("port_check", {}).get("requires_approval") else 0.0,
+        "approval_rate": (
+            1.0 if task.get("port_check", {}).get("requires_approval")
+            else 0.0
+        ),
         "proof_burden": _bounded_ratio(
             proof_burden,
             ARCHITECTURE_POTENTIAL_SCALES["proof_burden"],
         ),
+        # Nonlinear interaction: compounding risk
+        "entropy_churn_interaction": round(entropy_val * churn_val, 4),
     }
     potential = round(
         sum(
@@ -310,15 +386,35 @@ def policy_risk_score(
     pressure: float,
     weights: dict[str, float] | None = None,
 ) -> float:
+    """Normalized risk score in [0,1] with nonlinear interaction term.
+
+    All components are normalized to [0,1] before combining.
+    Includes an entropy*churn interaction term for compounding risk.
+    """
     w = weights or DEFAULT_RISK_WEIGHTS
     failures = port_entry.get("failures", 0)
-    return round(
-        (entropy * w.get("entropy", 0.35))
-        + (churn * w.get("churn", 0.25))
-        + (pressure * w.get("pressure", 0.25))
-        + (failures * w.get("failures", 0.15)),
-        4,
+
+    # Normalize unbounded components to [0,1]
+    churn_norm = _bounded_ratio(churn, RISK_NORMALIZATION_SCALES["churn"])
+    pressure_norm = _bounded_ratio(
+        pressure, RISK_NORMALIZATION_SCALES["pressure"],
     )
+    failures_norm = _bounded_ratio(
+        failures, RISK_NORMALIZATION_SCALES["failures"],
+    )
+
+    # Linear terms
+    linear = (
+        (entropy * w.get("entropy", 0.35))
+        + (churn_norm * w.get("churn", 0.25))
+        + (pressure_norm * w.get("pressure", 0.25))
+        + (failures_norm * w.get("failures", 0.15))
+    )
+
+    # Nonlinear interaction: entropy * churn compound risk
+    interaction = entropy * churn_norm * 0.15
+
+    return round(min(linear + interaction, 1.0), 4)
 
 
 def port_risk_snapshot(port_entry: dict[str, Any]) -> dict[str, Any]:
