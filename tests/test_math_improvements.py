@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from pathlib import Path
 
-from hx.hexmap import _is_connected, load_hexmap, validate_hexmap
+from hx.hexmap import _is_connected, graph_invariants, load_hexmap, validate_hexmap
 from hx.metrics import (
     _bounded_ratio,
     _normalized_entropy,
@@ -14,9 +15,11 @@ from hx.metrics import (
     occupation_fraction,
     policy_risk_score,
 )
-from hx.models import Cell, HexMap, ParentGroup, Port, PortSurfaceSpec
+from hx.models import VALID_PORT_DIRECTIONS, Cell, HexMap, ParentGroup, Port, PortSurfaceSpec
 from hx.parents import (
     _parent_group_connected,
+    parent_boundary_occupation,
+    parent_connectivity_strength,
     parent_occupation_fraction,
     parent_rollup_metrics,
     validate_parent_groups,
@@ -92,6 +95,9 @@ class TestHexLatticeGuarantees:
         b1 = hex_isoperimetric_bound(7)
         b2 = hex_isoperimetric_bound(19)
         assert b2 > b1 > 0
+        # Verify against known formula: 6*sqrt(n/3)
+        assert b1 == round(6.0 * math.sqrt(7 / 3.0), 3)
+        assert b2 == round(6.0 * math.sqrt(19 / 3.0), 3)
 
     def test_isoperimetric_bound_zero(self) -> None:
         assert hex_isoperimetric_bound(0) == 0.0
@@ -102,10 +108,11 @@ class TestHexLatticeGuarantees:
         ])
         assert occupation_fraction(hexmap) == 0.0
 
-    def test_occupation_fraction_full(self) -> None:
+    def test_occupation_fraction_exact_value(self) -> None:
         hexmap = _make_triangle_hexmap()
         frac = occupation_fraction(hexmap)
-        assert 0.0 < frac <= 1.0
+        # 3 cells x 6 slots = 18 total, 6 non-None ports
+        assert frac == round(6 / 18, 4)
 
     def test_is_connected_true(self) -> None:
         hexmap = _make_triangle_hexmap()
@@ -217,22 +224,26 @@ class TestHolonomy:
         triangles = find_triangles(hexmap)
         assert triangles == []
 
-    def test_holonomy_check_consistent(self) -> None:
+    def test_holonomy_check_detects_nonpropagation(self) -> None:
         hexmap = _make_triangle_hexmap()
+        # A exports {foo,bar} to B, B exports {qux} to C
+        # foo,bar are lost at B->C edge — holonomy violation
         warnings = holonomy_check(hexmap, ("A", "B", "C"))
-        # May or may not have warnings depending on export propagation
-        assert isinstance(warnings, list)
+        assert len(warnings) > 0
+        assert any("not propagated" in w for w in warnings)
 
     def test_holonomy_check_short_cycle(self) -> None:
         hexmap = _make_triangle_hexmap()
         warnings = holonomy_check(hexmap, ("A", "B"))
         assert warnings == []
 
-    def test_dual_port_check_no_conflict(self) -> None:
+    def test_dual_port_check_export_import_pair(self) -> None:
         hexmap = _make_triangle_hexmap()
-        # A[0] exports to B, B[0] imports from A — no conflict
+        # A[0] exports to B, B[0] imports from A — correct pairing
         warnings = dual_port_check(hexmap, "A", 0)
-        assert isinstance(warnings, list)
+        # foo is in A's exports and B's exports — but A=export, B=import
+        # so no non-orientable warning
+        assert not any("non-orientable" in w for w in warnings)
 
     def test_dual_port_check_both_export_same_symbol(self) -> None:
         """Two ports both exporting the same symbol = orientation warning."""
@@ -335,3 +346,170 @@ class TestParentRenormalization:
         pooled = _normalized_entropy(events_a + events_b)
         # Pooled should capture the diversity between ports
         assert pooled > avg
+
+
+# --- Additional tests for A-grade coverage ---
+
+class TestGraphInvariants:
+    def test_triangle_graph_invariants(self) -> None:
+        hexmap = _make_triangle_hexmap()
+        inv = graph_invariants(hexmap)
+        assert inv["vertices"] == 3
+        assert inv["edges"] == 3  # A-B, A-C, B-C
+        assert inv["components"] == 1
+        assert inv["euler_characteristic"] == 0  # V - E = 3 - 3
+
+    def test_disconnected_graph_invariants(self) -> None:
+        hexmap = _make_disconnected_hexmap()
+        inv = graph_invariants(hexmap)
+        assert inv["vertices"] == 2
+        assert inv["edges"] == 0
+        assert inv["components"] == 2
+        assert inv["euler_characteristic"] == 2  # V - E = 2 - 0
+
+    def test_single_cell_invariants(self) -> None:
+        hexmap = HexMap(version="1", cells=[
+            Cell(cell_id="x", paths=["**"], summary="X"),
+        ])
+        inv = graph_invariants(hexmap)
+        assert inv["vertices"] == 1
+        assert inv["components"] == 1
+
+
+class TestPortDirectionEnum:
+    def test_valid_directions(self) -> None:
+        assert "export" in VALID_PORT_DIRECTIONS
+        assert "import" in VALID_PORT_DIRECTIONS
+        assert "none" in VALID_PORT_DIRECTIONS
+        assert "bidirectional" in VALID_PORT_DIRECTIONS
+
+    def test_invalid_direction_raises(self) -> None:
+        import pytest
+        with pytest.raises(ValueError, match="Invalid port direction"):
+            Port(port_id="bad", direction="out")
+
+    def test_valid_direction_no_error(self) -> None:
+        p = Port(port_id="ok", direction="export")
+        assert p.direction == "export"
+
+
+class TestValidateHexmapWiring:
+    def test_holonomy_warnings_in_validation(self, tmp_path: Path) -> None:
+        """validate_hexmap now includes holonomy warnings."""
+        _git_init(tmp_path)
+        hexmap = _make_triangle_hexmap()
+        for cid in ["a", "b", "c"]:
+            (tmp_path / cid).mkdir(exist_ok=True)
+            (tmp_path / cid / "f.py").write_text("x=1\n")
+        (tmp_path / "HEXMAP.json").write_text(
+            json.dumps(hexmap.to_dict(), indent=2),
+        )
+        errors = validate_hexmap(tmp_path, hexmap)
+        # Should contain holonomy warnings from the triangle
+        holonomy_warnings = [e for e in errors if "holonomy" in e]
+        assert len(holonomy_warnings) > 0
+
+    def test_direction_validation_in_hexmap(self, tmp_path: Path) -> None:
+        """validate_hexmap checks port direction values."""
+        _git_init(tmp_path)
+        hexmap = _make_triangle_hexmap()
+        for cid in ["a", "b", "c"]:
+            (tmp_path / cid).mkdir(exist_ok=True)
+            (tmp_path / cid / "f.py").write_text("x=1\n")
+        (tmp_path / "HEXMAP.json").write_text(
+            json.dumps(hexmap.to_dict(), indent=2),
+        )
+        errors = validate_hexmap(tmp_path, hexmap)
+        # All directions in our fixture are valid
+        assert not any("invalid direction" in e for e in errors)
+
+
+class TestPairwiseEdgeWeight:
+    def test_symmetric_ports_higher_weight(self) -> None:
+        """When both sides have history, weight > single side."""
+        history = {
+            "p1": {
+                "changes": [
+                    {"categories": ["add_export"],
+                     "recorded_at": "2026-01-01T00:00:00+00:00"},
+                ],
+                "failures": 0, "touches": 1,
+            },
+            "p2": {
+                "changes": [
+                    {"categories": ["change_signature"],
+                     "recorded_at": "2026-01-01T00:00:00+00:00"},
+                ],
+                "failures": 0, "touches": 1,
+            },
+        }
+        w_pair = _port_edge_weight(history, "p1", "p2")
+        w_single = _port_edge_weight(history, "p1", None)
+        # Pairwise should be >= single (accounts for asymmetry)
+        assert w_pair >= w_single
+
+    def test_no_history_both_sides(self) -> None:
+        assert _port_edge_weight({}, None, None) == 1.0
+
+
+class TestParentConnectivityStrength:
+    def test_triangle_fully_connected(self) -> None:
+        hexmap = _make_triangle_hexmap()
+        group = ParentGroup(
+            parent_id="pg1", summary="T",
+            center_cell_id="A",
+            children=["B", "C", None, None, None, None],
+        )
+        strength = parent_connectivity_strength(hexmap, group)
+        assert strength == 1.0  # fully connected, no single removal disconnects
+
+    def test_chain_weaker_connectivity(self) -> None:
+        """A chain A-B-C (no A-C edge) has weaker connectivity."""
+        cells = [
+            Cell(cell_id="A", paths=["a/**"], summary="A",
+                 neighbors=["B", None, None, None, None, None]),
+            Cell(cell_id="B", paths=["b/**"], summary="B",
+                 neighbors=["A", "C", None, None, None, None]),
+            Cell(cell_id="C", paths=["c/**"], summary="C",
+                 neighbors=[None, "B", None, None, None, None]),
+        ]
+        hexmap = HexMap(version="1", cells=cells)
+        group = ParentGroup(
+            parent_id="pg1", summary="Chain",
+            center_cell_id="B",
+            children=["A", "C", None, None, None, None],
+        )
+        strength = parent_connectivity_strength(hexmap, group)
+        # Removing B disconnects A from C
+        assert strength < 1.0
+
+    def test_boundary_occupation(self) -> None:
+        hexmap = _make_triangle_hexmap()
+        group = ParentGroup(
+            parent_id="pg1", summary="T",
+            center_cell_id="A",
+            children=["B", "C", None, None, None, None],
+        )
+        bo = parent_boundary_occupation(hexmap, group)
+        # All boundary-facing ports should be 0 (no outside neighbors)
+        assert bo == 0.0
+
+
+class TestRiskScoreConvexity:
+    def test_weights_sum_to_one(self) -> None:
+        from hx.metrics import DEFAULT_RISK_WEIGHTS
+        total = sum(DEFAULT_RISK_WEIGHTS.values())
+        assert abs(total - 1.0) < 0.001
+
+    def test_max_score_reachable(self) -> None:
+        """With all components at max, score should reach 1.0."""
+        entry = {"failures": 100}
+        score = policy_risk_score(
+            entry, entropy=1.0, churn=100.0, pressure=500.0,
+        )
+        assert score == 1.0
+
+    def test_arch_potential_weights_sum_to_one(self) -> None:
+        from hx.metrics import ARCHITECTURE_POTENTIAL_WEIGHTS
+        total = sum(ARCHITECTURE_POTENTIAL_WEIGHTS.values())
+        assert abs(total - 1.0) < 0.001

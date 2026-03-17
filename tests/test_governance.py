@@ -50,7 +50,7 @@ def make_two_cell_hexmap() -> HexMap:
     port = Port(
         port_id="src-tests",
         neighbor_cell_id="tests",
-        direction="out",
+        direction="export",
         surface=PortSurfaceSpec(),
         compat=PortCompat(),
         proof=PortProof(),

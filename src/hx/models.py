@@ -29,6 +29,9 @@ class PortApproval:
     approvers: list[str] = field(default_factory=list)
 
 
+VALID_PORT_DIRECTIONS = frozenset({"none", "export", "import", "bidirectional"})
+
+
 @dataclass
 class Port:
     port_id: str
@@ -39,6 +42,13 @@ class Port:
     compat: PortCompat = field(default_factory=PortCompat)
     proof: PortProof = field(default_factory=PortProof)
     approval: PortApproval = field(default_factory=PortApproval)
+
+    def __post_init__(self) -> None:
+        if self.direction not in VALID_PORT_DIRECTIONS:
+            raise ValueError(
+                f"Invalid port direction '{self.direction}'. "
+                f"Must be one of: {sorted(VALID_PORT_DIRECTIONS)}"
+            )
 
 
 @dataclass

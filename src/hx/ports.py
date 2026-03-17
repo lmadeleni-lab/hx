@@ -260,9 +260,12 @@ def _find_port_between(
 def dual_port_check(
     hexmap: HexMap, cell_id: str, side_index: int,
 ) -> list[str]:
-    """Check port duality: if A exports X to B, B should see X.
+    """Check port duality and orientation consistency.
 
-    Returns list of warning strings.
+    Validates:
+    - If both sides export the same symbol (non-orientable)
+    - If a port exists but has no reverse port on the neighbor
+    - If export/import pairing is inconsistent
     """
     warnings: list[str] = []
     cell = hexmap.cell(cell_id)
@@ -272,25 +275,37 @@ def dual_port_check(
         return warnings
 
     exports = set(port.surface.declared_exports)
-    if not exports:
-        return warnings
 
     # Find the reverse port on the neighbor
     reverse_port = _find_port_between(hexmap, neighbor_id, cell_id)
+
+    # Check: port exists but no reverse port (gauge defect)
+    if reverse_port is None and exports:
+        warnings.append(
+            f"{cell_id}[{side_index}]->{neighbor_id}: "
+            f"exports {sorted(exports)} but no reverse port exists"
+        )
+        return warnings
+
     if reverse_port is None:
         return warnings
 
-    # Check that the neighbor's port acknowledges these exports
     neighbor_exports = set(reverse_port.surface.declared_exports)
-    # If the neighbor also declares exports, check for conflicts
-    # (both sides exporting the same symbol = potential conflict)
+
+    # Check: both sides export the same symbol (non-orientable)
     overlap = exports & neighbor_exports
-    if overlap and port.direction == "export" and reverse_port.direction == "export":
-        warnings.append(
-            f"{cell_id}[{side_index}]<->{neighbor_id}: "
-            f"both sides export {sorted(overlap)} — "
-            f"potential non-orientable boundary"
+    if overlap:
+        both_export = (
+            port.direction == "export"
+            and reverse_port.direction == "export"
         )
+        if both_export:
+            warnings.append(
+                f"{cell_id}[{side_index}]<->{neighbor_id}: "
+                f"both sides export {sorted(overlap)} — "
+                f"potential non-orientable boundary"
+            )
+
     return warnings
 
 
@@ -301,13 +316,16 @@ def holonomy_check(
     """Check export consistency around a cycle of cells.
 
     For a cycle (A, B, C), verifies that port contracts compose
-    consistently. Returns warning strings (empty = consistent).
+    consistently around the loop (cocycle condition). Checks:
+    1. Transitivity: exports at edge i should propagate to edge i+1
+    2. Cocycle: direct A->C contract matches composed A->B->C path
+    Returns warning strings (empty = consistent).
     """
     warnings: list[str] = []
     if len(cycle) < 3:
         return warnings
 
-    # Collect exports along each edge of the cycle
+    # Collect exports along each directed edge of the cycle
     edge_exports: list[set[str]] = []
     for i in range(len(cycle)):
         from_cell = cycle[i]
@@ -318,30 +336,52 @@ def holonomy_check(
         else:
             edge_exports.append(set())
 
-    # Check: symbols that enter the cycle should be available
-    # throughout. If A exports {x} to B, and B exports {y} to C,
-    # but C exports {x} back to A without B ever seeing {x},
-    # that's a holonomy violation.
-    all_exports = [e for e in edge_exports if e]
-    if len(all_exports) < 2:
+    # Need at least 2 edges with exports to check composition
+    active_edges = [e for e in edge_exports if e]
+    if len(active_edges) < 2:
         return warnings
 
-    # Simple holonomy: check that each edge's exports are a subset
-    # of what the previous edge makes available (transitivity)
+    # Check 1: Transitivity — symbols exported at edge i that
+    # are lost at edge i+1 (any amount of loss is a violation)
     for i in range(len(cycle)):
         current = edge_exports[i]
         next_edge = edge_exports[(i + 1) % len(cycle)]
         if current and next_edge:
             lost = current - next_edge
-            # Symbols exported at one edge but not the next
-            # may indicate a contract gap (not necessarily fatal)
-            if lost and len(lost) < len(current):
+            if lost:
                 from_cell = cycle[i]
                 mid_cell = cycle[(i + 1) % len(cycle)]
                 to_cell = cycle[(i + 2) % len(cycle)]
                 warnings.append(
                     f"holonomy: {from_cell}->{mid_cell}->{to_cell}: "
                     f"exports {sorted(lost)} not propagated"
+                )
+
+    # Check 2: Cocycle condition — for each pair of non-adjacent
+    # cycle vertices, the direct port should be consistent with
+    # the composed path through intermediate vertices
+    for i in range(len(cycle)):
+        a = cycle[i]
+        c = cycle[(i + 2) % len(cycle)]
+        b = cycle[(i + 1) % len(cycle)]
+        # Direct A->C port
+        direct_port = _find_port_between(hexmap, a, c)
+        direct_exports = (
+            set(direct_port.surface.declared_exports)
+            if direct_port else set()
+        )
+        # Composed A->B exports intersected with B->C exports
+        ab_exports = edge_exports[i]
+        bc_exports = edge_exports[(i + 1) % len(cycle)]
+        composed = ab_exports & bc_exports if ab_exports and bc_exports else set()
+        # If direct and composed both have content, check consistency
+        if direct_exports and composed:
+            mismatch = direct_exports.symmetric_difference(composed)
+            if mismatch:
+                warnings.append(
+                    f"cocycle: {a}->{c} direct exports "
+                    f"{sorted(direct_exports)} != composed "
+                    f"{a}->{b}->{c} exports {sorted(composed)}"
                 )
     return warnings
 

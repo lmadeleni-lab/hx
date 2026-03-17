@@ -16,7 +16,10 @@ CHANGE_CATEGORY_COUNT = 6
 CHURN_HALF_LIFE_DAYS = 30.0
 CHURN_DECAY_LAMBDA = math.log(2) / CHURN_HALF_LIFE_DAYS
 
-# Hex lattice percolation threshold (exact for site percolation)
+# Conservative percolation threshold for hex governance.
+# The exact site percolation threshold for the triangular lattice
+# (dual of hex) is 1/2. For the hex lattice itself, bond p_c ~ 0.6527
+# and site p_c ~ 0.6962. We use 0.5 as a conservative lower bound.
 HEX_PERCOLATION_THRESHOLD = 0.5
 
 ARCHITECTURE_POTENTIAL_WEIGHTS = {
@@ -29,7 +32,7 @@ ARCHITECTURE_POTENTIAL_WEIGHTS = {
     "entropy_churn_interaction": 0.15,
 }
 ARCHITECTURE_POTENTIAL_SCALES = {
-    "boundary_pressure": 6.0,
+    "boundary_pressure": 3.0,  # now isoperimetrically normalized
     "port_churn": 3.0,
     "proof_burden": 4.0,
 }
@@ -86,27 +89,43 @@ def occupation_fraction(hexmap: Any) -> float:
 
 
 def _port_edge_weight(
-    port_history: dict[str, Any], port_id: str | None,
+    port_history: dict[str, Any],
+    port_id: str | None,
+    neighbor_port_id: str | None = None,
 ) -> float:
-    """Compute information-weighted edge cost for a boundary port.
+    """Compute pairwise information-weighted edge cost.
 
-    Combines port entropy and churn into a single weight.
+    Examines both endpoints of a boundary edge to measure the
+    transport cost (risk-profile mismatch) across the boundary.
     Falls back to 1.0 for ports without history.
     """
-    if port_id is None:
+    if port_id is None and neighbor_port_id is None:
         return 1.0
-    entry = port_history.get(port_id)
-    if entry is None:
-        return 1.0
-    changes = entry.get("changes", [])
-    if not changes:
-        return 1.0
-    category_events = [c.get("categories", []) for c in changes]
-    entropy = _normalized_entropy(category_events)
-    churn = _decayed_churn(changes)
-    churn_norm = min(churn / 5.0, 1.0)
-    # Weight: base 1.0 + entropy contribution + churn contribution
-    return round(1.0 + entropy + churn_norm, 4)
+
+    churn_scale = RISK_NORMALIZATION_SCALES["churn"]
+
+    def _endpoint_cost(pid: str | None) -> tuple[float, float]:
+        if pid is None:
+            return 0.0, 0.0
+        entry = port_history.get(pid)
+        if entry is None or not entry.get("changes"):
+            return 0.0, 0.0
+        changes = entry["changes"]
+        cats = [c.get("categories", []) for c in changes]
+        ent = _normalized_entropy(cats)
+        ch = min(_decayed_churn(changes) / churn_scale, 1.0)
+        return ent, ch
+
+    ent_a, ch_a = _endpoint_cost(port_id)
+    ent_b, ch_b = _endpoint_cost(neighbor_port_id)
+
+    # Pairwise cost: max of both endpoints (captures mismatch)
+    # plus difference penalty (Wasserstein-inspired asymmetry)
+    max_entropy = max(ent_a, ent_b)
+    max_churn = max(ch_a, ch_b)
+    asymmetry = abs(ent_a - ent_b) * 0.5
+
+    return round(1.0 + max_entropy + max_churn + asymmetry, 4)
 
 
 def _now_iso() -> str:
@@ -222,7 +241,16 @@ def boundary_pressure(root: Path, task: dict[str, Any]) -> float:
             if neighbor is not None and neighbor not in active_set:
                 port = cell.ports[i] if i < len(cell.ports) else None
                 port_id = port.port_id if port else None
-                cut_weight += _port_edge_weight(history, port_id)
+                # Pairwise: also examine the neighbor's reverse port
+                from hx.ports import _find_port_between
+                neighbor_port = _find_port_between(hexmap, neighbor, cell_id)
+                nbr_port_id = neighbor_port.port_id if neighbor_port else None
+                cut_weight += _port_edge_weight(history, port_id, nbr_port_id)
+
+    # Normalize against hex isoperimetric lower bound
+    iso_bound = hex_isoperimetric_bound(len(known_active_cells))
+    if iso_bound > 0:
+        return round(cut_weight / iso_bound, 3)
     return round(cut_weight, 3)
 
 
@@ -375,7 +403,13 @@ def compute_metrics(root: Path, task: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
-DEFAULT_RISK_WEIGHTS = {"entropy": 0.35, "churn": 0.25, "pressure": 0.25, "failures": 0.15}
+DEFAULT_RISK_WEIGHTS = {
+    "entropy": 0.30,
+    "churn": 0.20,
+    "pressure": 0.20,
+    "failures": 0.15,
+    "entropy_churn": 0.15,
+}
 
 
 def policy_risk_score(
@@ -389,7 +423,8 @@ def policy_risk_score(
     """Normalized risk score in [0,1] with nonlinear interaction term.
 
     All components are normalized to [0,1] before combining.
-    Includes an entropy*churn interaction term for compounding risk.
+    Weights sum to 1.0 including the interaction term, forming a
+    proper convex combination with guaranteed [0,1] output.
     """
     w = weights or DEFAULT_RISK_WEIGHTS
     failures = port_entry.get("failures", 0)
@@ -403,18 +438,16 @@ def policy_risk_score(
         failures, RISK_NORMALIZATION_SCALES["failures"],
     )
 
-    # Linear terms
-    linear = (
-        (entropy * w.get("entropy", 0.35))
-        + (churn_norm * w.get("churn", 0.25))
-        + (pressure_norm * w.get("pressure", 0.25))
+    # All components in [0,1], weights sum to 1.0
+    score = (
+        (entropy * w.get("entropy", 0.30))
+        + (churn_norm * w.get("churn", 0.20))
+        + (pressure_norm * w.get("pressure", 0.20))
         + (failures_norm * w.get("failures", 0.15))
+        + (entropy * churn_norm * w.get("entropy_churn", 0.15))
     )
 
-    # Nonlinear interaction: entropy * churn compound risk
-    interaction = entropy * churn_norm * 0.15
-
-    return round(min(linear + interaction, 1.0), 4)
+    return round(min(score, 1.0), 4)
 
 
 def port_risk_snapshot(port_entry: dict[str, Any]) -> dict[str, Any]:
