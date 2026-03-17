@@ -4,18 +4,33 @@
 
 ## Current Release Target
 
-The current publishability target is `0.1.0`.
+The current version is `0.8.0`.
 
-For `0.1.0`, the intended public contract is:
+The public contract includes:
 
 - CLI commands:
+  `hx setup`,
+  `hx bootstrap`,
+  `hx readiness`,
+  `hx suggest`,
+  `hx run`,
+  `hx status`,
   `hx init`,
   `hx hex build`,
   `hx hex validate`,
+  `hx hex show`,
+  `hx hex watch`,
+  `hx hex parent show`,
+  `hx hex parent watch`,
   `hx mcp serve`,
   `hx doctor`,
   `hx log`,
   `hx replay`,
+  `hx memory summarize`,
+  `hx memory status`,
+  `hx resume`,
+  `hx codex setup`,
+  `hx codex status`,
   `hx benchmark validate`,
   `hx benchmark run`,
   `hx benchmark report`
@@ -64,7 +79,7 @@ Current install contract proven by CI:
 This is the current supported packaging claim. A public package index release is
 not yet part of the release contract.
 
-Current host target for `0.1.0`:
+Current host target:
 
 - macOS terminal sessions only
 - interactive terminal UX includes a startup screen plus colored status/loading
@@ -110,7 +125,7 @@ Call out these items explicitly whenever they change:
 - metric formulas or maturity labels
 - policy defaults
 
-The following compatibility promises apply for `0.1.0`:
+The following compatibility promises apply for `0.x`:
 
 - CLI command names listed in this document are intended public names
 - MCP tool names listed in this document are intended public names

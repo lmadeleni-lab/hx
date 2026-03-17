@@ -55,7 +55,7 @@ When to invoke:
 
 Before substantial work:
 
-- read [plan.md](/Users/laurent/Development/hx/plan.md)
+- read [plan.md](plan.md)
 - align the task to the current phase, workstream, and quality gates
 - preserve the hex/port/proof/safety thesis
 
