@@ -469,6 +469,149 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.setup import run_setup
+
+    with ui.activity(
+        "Running guided setup",
+        success_message="Setup complete",
+    ) as activity:
+        activity.update("Detecting language and scanning repo")
+        result = run_setup(root, force=args.force)
+
+    stats = result["stats"]
+    print(f"Language detected: {result['language']}")
+    print(
+        f"Hexmap: {stats['cells']} cells, "
+        f"{stats['ports']} ports, "
+        f"{stats['boundary_crossings']} boundary crossings, "
+        f"{stats['parent_groups']} parent groups"
+    )
+    print(f"Suggested policy mode: {result['suggested_mode']}")
+
+    if result["validation_errors"]:
+        print(f"\nValidation warnings ({len(result['validation_errors'])}):")
+        for err in result["validation_errors"][:5]:
+            print(f"  - {err}")
+
+    print(f"\nFiles written: {', '.join(result['files_written'])}")
+    print(
+        render_action_card(
+            "Next Steps",
+            [
+                "hx bootstrap    — scaffold agent config (.claude/)",
+                "hx status        — view governance dashboard",
+                "hx run '<task>'  — run a governed agent task",
+            ],
+            color=ui.color,
+        )
+    )
+    return 1 if result["validation_errors"] else 0
+
+
+def cmd_bootstrap(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.bootstrap import run_bootstrap
+    from hx.setup import detect_primary_language
+
+    with ui.activity(
+        "Scaffolding agent config files",
+        success_message="Agent config scaffolded",
+    ) as activity:
+        activity.update("Generating .claude/ directory")
+        language = detect_primary_language(root)
+        result = run_bootstrap(root, force=args.force, language=language)
+
+    if result.get("error"):
+        ui.note(result["error"], level="error")
+        return 1
+
+    if result["files_written"]:
+        print("Files written:")
+        for f in result["files_written"]:
+            print(f"  {f}")
+    else:
+        print("All files already exist (use --force to overwrite)")
+
+    print(
+        render_action_card(
+            "Agent Ready",
+            [
+                "Claude Code will auto-discover .claude/CLAUDE.md",
+                "Codex will use AGENTS.md and TOOLS.md",
+                "Run `hx run '<task>'` to start a governed task",
+            ],
+            color=ui.color,
+        )
+    )
+    return 0
+
+
+def cmd_readiness(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.readiness import check_readiness, render_readiness
+
+    with ui.activity(
+        "Checking project readiness",
+        success_message="Readiness check complete",
+    ):
+        report = check_readiness(root)
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(render_readiness(report, color=ui.color))
+    return 0 if report["ready"] else 1
+
+
+def cmd_suggest(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.suggest import suggest_tasks
+
+    with ui.activity(
+        "Analyzing repo for task suggestions",
+        success_message="Task suggestions ready",
+    ):
+        suggestions = suggest_tasks(root)
+
+    if not suggestions:
+        print("No suggestions — your project looks good!")
+        return 0
+
+    limit = args.n
+    if args.json:
+        print(json.dumps(suggestions[:limit], indent=2))
+    else:
+        for i, s in enumerate(suggestions[:limit], 1):
+            risk_label = s["risk"]
+            if ui.color:
+                from hx.ui import paint
+                risk_colors = {
+                    "none": "green", "low": "green",
+                    "medium": "yellow", "high": "red",
+                }
+                risk_label = paint(
+                    risk_label, risk_colors.get(s["risk"], "dim"),
+                    color=True,
+                )
+            cell_str = f" (cell: {s['cell']})" if s["cell"] else ""
+            print(f"{i}. [{risk_label}] {s['task']}{cell_str}")
+            print(f"   {s['reason']}")
+            print(f"   $ {s['command']}")
+            print()
+
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -657,6 +800,31 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="Show governance status dashboard")
     status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(func=cmd_status)
+
+    setup_parser = subparsers.add_parser(
+        "setup", help="One-command guided onboarding",
+    )
+    setup_parser.add_argument("--force", action="store_true")
+    setup_parser.set_defaults(func=cmd_setup)
+
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap", help="Scaffold agent-ready config files",
+    )
+    bootstrap_parser.add_argument("--force", action="store_true")
+    bootstrap_parser.set_defaults(func=cmd_bootstrap)
+
+    readiness_parser = subparsers.add_parser(
+        "readiness", help="Check project readiness",
+    )
+    readiness_parser.add_argument("--json", action="store_true")
+    readiness_parser.set_defaults(func=cmd_readiness)
+
+    suggest_parser = subparsers.add_parser(
+        "suggest", help="Suggest low-risk starter tasks",
+    )
+    suggest_parser.add_argument("-n", type=int, default=5)
+    suggest_parser.add_argument("--json", action="store_true")
+    suggest_parser.set_defaults(func=cmd_suggest)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")

@@ -9,8 +9,20 @@ from hx.audit import append_event, finish_run, start_run
 from hx.authz import allowed_cells as calc_allowed_cells
 from hx.config import ensure_hx_dirs
 from hx.hexmap import load_hexmap
+from hx.memory import load_memory_context
 from hx.stream import StreamRenderer
 from hx.tools import ToolRegistry
+
+
+def _memory_section(root: Path) -> str:
+    """Build an optional memory context section for the system prompt."""
+    memory_block = load_memory_context(root)
+    if not memory_block:
+        return ""
+    return f"""
+## Memory Context
+{memory_block}
+"""
 
 
 def _build_system_prompt(
@@ -63,7 +75,7 @@ def _build_system_prompt(
 - Prefer minimal radius. Justify any radius expansion.
 - Every action is audited. Be precise and deliberate.
 - active_cell_id="{active_cell_id}", radius={radius} — pass these to tools.
-"""
+{_memory_section(base)}"""
 
 
 def run_agent(

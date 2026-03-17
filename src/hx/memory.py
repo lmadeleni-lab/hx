@@ -17,6 +17,8 @@ CELL_SUMMARIES = "cell_summaries.json"
 OPEN_THREADS = "open_threads.json"
 SESSION_SUMMARY = "session_summary.json"
 
+MEMORY_INJECTION_MAX_CHARS = 3000
+
 
 def _state_path(root: Path, filename: str) -> Path:
     ensure_hx_dirs(root)
@@ -278,6 +280,76 @@ def memory_status(root: Path) -> dict[str, Any]:
         "pending_tasks": len(open_threads.get("pending_tasks", [])),
         "failed_runs": len(open_threads.get("failed_runs", [])),
     }
+
+
+def load_memory_context(
+    root: Path,
+    *,
+    max_chars: int = MEMORY_INJECTION_MAX_CHARS,
+) -> str:
+    """Load state files and build a compact text block for system prompt.
+
+    Returns empty string if no state files exist (first run).
+    """
+    repo_summary = _load_state_if_exists(root, REPO_SUMMARY)
+    open_threads = _load_state_if_exists(root, OPEN_THREADS)
+
+    if repo_summary is None and open_threads is None:
+        return ""
+
+    lines: list[str] = []
+
+    # Top risky ports
+    if repo_summary:
+        risky = repo_summary.get("top_risky_ports", [])[:3]
+        if risky:
+            port_parts = []
+            for p in risky:
+                port_parts.append(
+                    f"{p.get('port_id', '?')} "
+                    f"(risk={p.get('policy_risk_score', '?')})"
+                )
+            lines.append("Risky ports: " + ", ".join(port_parts))
+
+        # Architecture potential
+        potential = repo_summary.get("architecture_potential")
+        if potential is not None:
+            lines.append(f"Architecture potential: {potential}")
+
+    # Failed runs
+    if open_threads:
+        failed = open_threads.get("failed_runs", [])[:3]
+        if failed:
+            run_parts = []
+            for r in failed:
+                cell = r.get("active_cell_id", "?")
+                run_parts.append(
+                    f"{r.get('run_id', '?')} "
+                    f"({r.get('command', '?')}, cell={cell})"
+                )
+            lines.append("Failed runs: " + ", ".join(run_parts))
+
+        pending = open_threads.get("pending_tasks", [])[:3]
+        if pending:
+            task_parts = []
+            for t in pending:
+                cell = t.get("active_cell_id", "?")
+                needs = " [needs approval]" if t.get("requires_approval") else ""
+                task_parts.append(
+                    f"{t.get('task_id', '?')} (cell={cell}{needs})"
+                )
+            lines.append("Pending tasks: " + ", ".join(task_parts))
+
+    # Recommended actions
+    if repo_summary:
+        actions = repo_summary.get("recommended_next_actions", [])[:3]
+        if actions:
+            lines.append("Next actions: " + " ".join(actions))
+
+    result = "\n".join(lines)
+    if len(result) > max_chars:
+        result = result[:max_chars - 3] + "..."
+    return result
 
 
 def resume_context(root: Path) -> dict[str, Any]:
