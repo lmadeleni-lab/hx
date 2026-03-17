@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from hx.repo_ops import commit_patch, load_task, stage_patch
+from hx.templates import policy_toml
 
 PATCH = """--- a/src/demo.py
 +++ b/src/demo.py
@@ -25,6 +26,7 @@ def init_repo(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "demo.py").write_text('print("hello")\n')
+    (tmp_path / "POLICY.toml").write_text(policy_toml())
 
 
 def test_stage_patch_tracks_files(tmp_path: Path) -> None:

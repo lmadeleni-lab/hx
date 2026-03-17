@@ -74,15 +74,27 @@ class HexMap:
     cells: list[Cell]
     port_types: dict[str, Any] = field(default_factory=dict)
     parent_groups: list[ParentGroup] = field(default_factory=list)
+    _cell_index: dict[str, Cell] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        self._rebuild_index()
+
+    def _rebuild_index(self) -> None:
+        self._cell_index = {cell.cell_id: cell for cell in self.cells}
 
     def cell(self, cell_id: str) -> Cell:
-        for cell in self.cells:
-            if cell.cell_id == cell_id:
-                return cell
-        raise KeyError(f"Unknown cell_id: {cell_id}")
+        result = self._cell_index.get(cell_id)
+        if result is None:
+            raise KeyError(f"Unknown cell_id: {cell_id}")
+        return result
+
+    def has_cell(self, cell_id: str) -> bool:
+        return cell_id in self._cell_index
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("_cell_index", None)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HexMap:
@@ -157,7 +169,9 @@ class TaskState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TaskState:
-        return cls(**data)
+        known_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return cls(**filtered)
 
 
 @dataclass
