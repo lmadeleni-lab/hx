@@ -5,12 +5,39 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hx"
 version = "0.11.0"
-description = "Hexagonal cell + port governance harness for local coding agents"
+description = "Stateful reasoning engine for agentic code development — hexagonal cell governance, proof-carrying diffs, and mathematically-grounded decision logic"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
   {name = "hx contributors"},
+]
+keywords = [
+  "agentic",
+  "coding-agent",
+  "governance",
+  "hexagonal",
+  "mcp",
+  "reasoning-engine",
+  "stateful",
+  "proof-carrying",
+  "code-quality",
+  "llm",
+  "claude",
+  "gemini",
+  "codex",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Version Control",
+  "Typing :: Typed",
 ]
 dependencies = [
   "mcp>=1.8.0,<2.0.0",
@@ -27,6 +54,13 @@ dev = [
 agent = [
   "anthropic>=0.50.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lmadeleni-lab/hx"
+Repository = "https://github.com/lmadeleni-lab/hx"
+Issues = "https://github.com/lmadeleni-lab/hx/issues"
+Changelog = "https://github.com/lmadeleni-lab/hx/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/lmadeleni-lab/hx/tree/main/docs"
 
 [project.scripts]
 hx = "hx.cli:main"
