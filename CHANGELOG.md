@@ -2,6 +2,29 @@
 
 All notable changes to `hx` will be recorded in this file.
 
+## [0.11.0] — 2026-03-17
+
+### Added
+
+- **Claude Code native integration**: `hx bootstrap` generates
+  `.claude/settings.json` with MCP server auto-discovery config.
+- **Gemini CLI integration**: `hx gemini setup` and `hx gemini status`
+  commands. Writes MCP entry to `~/.gemini/settings.json`.
+- **GEMINI.md**: `hx bootstrap` generates Gemini-specific agent
+  instructions derived from live HEXMAP and POLICY.
+
+## [0.10.0] — 2026-03-17
+
+### Added
+
+- **Task planner**: `hx plan create/show/advance` for multi-step work
+  across cells with dependency tracking.
+- **Sample prompts**: `hx samples` shows 6 task templates with concrete
+  `hx run` examples (bug fix, tests, refactor, docs, features, multi-step).
+- **Actionable error messages**: authorization failures now explain what
+  went wrong and how to fix it (policy violations show denylist,
+  cell errors list available cells, API key errors give setup guide).
+
 ## [0.9.0] — 2026-03-17
 
 ### Added
