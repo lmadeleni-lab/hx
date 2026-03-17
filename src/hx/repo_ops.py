@@ -306,7 +306,13 @@ def repo_search(
     Returns dict with matches, total_count, and capped flag.
     """
     # Use cell_paths for pre-filtering if provided
-    patterns = cell_paths or globs or ["**"]
+    raw_patterns = cell_paths or globs or ["**/*"]
+    # Ensure patterns match files (append /* if ending with **)
+    patterns = []
+    for p in raw_patterns:
+        patterns.append(p)
+        if p.endswith("**"):
+            patterns.append(p + "/*")
     results: list[dict[str, Any]] = []
     total_count = 0
     seen_files: set[str] = set()

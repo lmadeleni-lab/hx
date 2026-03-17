@@ -150,13 +150,20 @@ def cmd_hex_validate(args: argparse.Namespace) -> int:
         success_message="Validated HEXMAP topology",
     ) as activity:
         activity.update("Loading HEXMAP.json")
-        errors = validate_hexmap(root, load_hexmap(root))
+        all_issues = validate_hexmap(root, load_hexmap(root))
+        warnings = [e for e in all_issues if e.startswith("warning:")]
+        errors = [e for e in all_issues if not e.startswith("warning:")]
         if errors:
             activity.fail("HEXMAP validation failed")
             for error in errors:
                 print(error)
+        if warnings:
+            for w in warnings:
+                print(w)
+        if errors:
             return 1
-    print("HEXMAP.json is valid")
+    if not errors:
+        print("HEXMAP.json is valid")
     return 0
 
 

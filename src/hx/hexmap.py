@@ -250,9 +250,12 @@ def validate_hexmap(root: Path, hexmap: HexMap) -> list[str]:
                     symmetric = cell.cell_id in other.neighbors
                 if not symmetric:
                     errors.append(f"{cell.cell_id}: neighbor {neighbor} is not symmetric")
-    # Graph connectivity check (structural error)
+    # Graph connectivity check (warning — auto-built hexmaps may start disconnected)
     if len(hexmap.cells) > 1 and not _is_connected(hexmap):
-        errors.append("hexmap graph is not connected")
+        errors.append(
+            "warning: hexmap graph is not connected — "
+            "add neighbor links between cells for full governance"
+        )
 
     # Occupation fraction (warning, not error — prefixed)
     from hx.metrics import HEX_PERCOLATION_THRESHOLD, occupation_fraction

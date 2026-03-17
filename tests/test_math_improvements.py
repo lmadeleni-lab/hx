@@ -138,8 +138,8 @@ class TestHexLatticeGuarantees:
         (tmp_path / "HEXMAP.json").write_text(
             json.dumps(hexmap.to_dict(), indent=2),
         )
-        errors = validate_hexmap(tmp_path, hexmap)
-        assert any("not connected" in e for e in errors)
+        issues = validate_hexmap(tmp_path, hexmap)
+        assert any("not connected" in e for e in issues)
 
 
 # --- Improvement 2: Information-weighted boundary pressure ---
