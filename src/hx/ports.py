@@ -13,6 +13,7 @@ from typing import Any
 from hx.audit import append_event, update_run
 from hx.authz import allowed_cells as calc_allowed_cells
 from hx.authz import authorize_paths
+from hx.config import STATE_DIR
 from hx.hexmap import load_hexmap, resolve_cell_id
 from hx.metrics import load_port_history, port_risk_snapshot
 from hx.models import Cell, HexMap, Port
@@ -22,6 +23,8 @@ from hx.policy import (
     require_human_for_breaking,
     strict_risk_threshold,
 )
+
+_SURFACES_CACHE = "surfaces.json"
 
 CHANGE_CATEGORIES = [
     "add_export",
@@ -127,6 +130,28 @@ SURFACE_EXTRACTORS: dict[str, Any] = {
 SCHEMA_EXTENSIONS = {".json", ".proto", ".sql", ".graphql", ".avsc"}
 
 
+def _load_surface_cache(root: Path) -> dict[str, Any]:
+    path = root / STATE_DIR / _SURFACES_CACHE
+    if path.exists():
+        return json.loads(path.read_text())
+    return {}
+
+
+def _save_surface_cache(root: Path, cache: dict[str, Any]) -> None:
+    path = root / STATE_DIR / _SURFACES_CACHE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cache, indent=2) + "\n")
+
+
+def rebuild_surface_cache(root: Path, hexmap: HexMap) -> dict[str, Any]:
+    """Rebuild and persist the surface cache for all cells."""
+    cache: dict[str, Any] = {}
+    for cell in hexmap.cells:
+        cache[cell.cell_id] = extract_cell_surface(root, cell)
+    _save_surface_cache(root, cache)
+    return cache
+
+
 def extract_cell_surface(root: Path, cell: Cell) -> dict[str, Any]:
     exports: set[str] = set()
     signatures: dict[str, str] = {}
@@ -184,7 +209,12 @@ def describe_port(hexmap: HexMap, cell_id: str, side_index: int) -> dict[str, An
 def port_surface(root: Path, hexmap: HexMap, cell_id: str, side_index: int) -> dict[str, Any]:
     cell = hexmap.cell(cell_id)
     port = cell.ports[side_index]
-    surface = extract_cell_surface(root, cell)
+    # Use cached surface if available
+    cache = _load_surface_cache(root)
+    if cell_id in cache:
+        surface = dict(cache[cell_id])
+    else:
+        surface = extract_cell_surface(root, cell)
     if port and port.surface.declared_exports:
         surface["exports"] = sorted(set(port.surface.declared_exports))
     return surface

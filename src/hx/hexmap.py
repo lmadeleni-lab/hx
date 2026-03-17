@@ -126,6 +126,31 @@ def _pattern_matches(rel_path: str, pattern: str) -> bool:
     return False
 
 
+def adjacency_summary(
+    hexmap: HexMap, cell_ids: list[str],
+) -> list[dict[str, str | int]]:
+    """Build a sparse adjacency list from the hex graph.
+
+    Returns a list of edge dicts with from, side, to, direction.
+    Only includes non-null neighbors within the given cell_ids scope.
+    """
+    edges: list[dict[str, str | int]] = []
+    for cell_id in cell_ids:
+        cell = hexmap.cell(cell_id)
+        for i, neighbor in enumerate(cell.neighbors):
+            if neighbor is None:
+                continue
+            port = cell.ports[i] if i < len(cell.ports) else None
+            direction = port.direction if port else "none"
+            edges.append({
+                "from": cell_id,
+                "side": i,
+                "to": neighbor,
+                "direction": direction,
+            })
+    return edges
+
+
 def resolve_cell_id(hexmap: HexMap, rel_path: str) -> str | None:
     for cell in hexmap.cells:
         if any(_pattern_matches(rel_path, pattern) for pattern in cell.paths):

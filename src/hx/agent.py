@@ -8,10 +8,13 @@ from typing import Any
 from hx.audit import append_event, finish_run, start_run
 from hx.authz import allowed_cells as calc_allowed_cells
 from hx.config import ensure_hx_dirs
-from hx.hexmap import load_hexmap
+from hx.hexmap import adjacency_summary, load_hexmap
 from hx.memory import load_memory_context
 from hx.stream import StreamRenderer
 from hx.tools import ToolRegistry
+
+# Max chars for compressed tool results (~3K tokens)
+_MAX_RESULT_CHARS = 12_000
 
 
 def _memory_section(root: Path) -> str:
@@ -25,6 +28,59 @@ def _memory_section(root: Path) -> str:
 """
 
 
+def _compress_tool_result(
+    tool_name: str, result: dict[str, Any],
+) -> dict[str, Any]:
+    """Deduplicate and compact a tool result to reduce token usage."""
+    compressed = dict(result)
+
+    # Strip null ports from port-related results
+    if "ports" in compressed and isinstance(compressed["ports"], list):
+        compressed["ports"] = [
+            p for p in compressed["ports"]
+            if p.get("neighbor_cell_id") is not None
+            or p.get("port_contract") is not None
+        ]
+        # Deduplicate identical port entries
+        seen: set[str] = set()
+        deduped = []
+        for p in compressed["ports"]:
+            key = json.dumps(p, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(p)
+        compressed["ports"] = deduped
+
+    # Strip verbose fields from port.check
+    if tool_name == "port.check":
+        risk = compressed.get("risk_summary", {})
+        if "high_risk_ports" in risk:
+            risk.pop("ports", None)
+        risk.pop("reporting_note", None)
+        obligations = compressed.get("obligations", {})
+        obligations.pop("check_specs", None)
+        obligations.pop("artifact_specs", None)
+
+    # Truncate oversized results
+    serialized = json.dumps(compressed, default=str)
+    if len(serialized) > _MAX_RESULT_CHARS:
+        compressed["_truncated"] = True
+        compressed["_original_size"] = len(serialized)
+        # Keep only top-level keys with compact values
+        for key in list(compressed.keys()):
+            val = json.dumps(compressed[key], default=str)
+            if len(val) > 2000:
+                if isinstance(compressed[key], list):
+                    compressed[key] = compressed[key][:5]
+                elif isinstance(compressed[key], dict):
+                    compressed[key] = {
+                        k: v for i, (k, v) in
+                        enumerate(compressed[key].items()) if i < 10
+                    }
+
+    return compressed
+
+
 def _build_system_prompt(
     registry: ToolRegistry,
     active_cell_id: str,
@@ -35,18 +91,16 @@ def _build_system_prompt(
     cell = hexmap.cell(active_cell_id)
     allowed = calc_allowed_cells(hexmap, active_cell_id, radius)
 
-    port_summaries = []
-    for cid in allowed:
-        for i in range(6):
-            port_info = registry.call("port.describe", {"cell_id": cid, "side_index": i})
-            if port_info.get("neighbor_cell_id"):
-                neighbor = port_info["neighbor_cell_id"]
-                direction = port_info.get("direction", "none")
-                port_summaries.append(
-                    f"  {cid}[{i}] → {neighbor} ({direction})"
-                )
-
-    ports_text = "\n".join(port_summaries[:12]) if port_summaries else "  (no active ports)"
+    # Sparse graph: direct hex graph query instead of 36 port.describe calls
+    edges = adjacency_summary(hexmap, allowed)
+    if edges:
+        port_lines = [
+            f"  {e['from']}[{e['side']}] -> {e['to']} ({e['direction']})"
+            for e in edges[:12]
+        ]
+        ports_text = "\n".join(port_lines)
+    else:
+        ports_text = "  (no active ports)"
 
     return f"""You are an AI coding agent operating inside hx governance.
 
@@ -57,19 +111,18 @@ def _build_system_prompt(
 - Invariants: {', '.join(cell.invariants) or 'none'}
 - Allowed cells: {', '.join(allowed)}
 
-## Active Ports
+## Cell Graph
 {ports_text}
 
 ## Governance Rules
 - You may ONLY read/write files within your allowed cells.
-- Use repo.read to read files and repo.search to search code.
+- Use hex.context (default: summary mode) to explore, then detail='full' if needed.
+- repo.read supports offset/limit for large files. Check total_lines first.
+- repo.search returns max 20 results; use total_count to know if more exist.
 - Use repo.stage_patch to propose changes as unified diffs.
 - After staging, run port.check to detect boundary impacts.
-- If port.check indicates requires_approval, the user will be prompted.
 - Run proof.collect and proof.verify before committing.
-- Run tests.run to validate changes.
 - Use repo.commit_patch to finalize.
-- Use cmd.run for shell commands (must be in the policy allowlist).
 
 ## Important
 - Prefer minimal radius. Justify any radius expansion.
@@ -256,7 +309,10 @@ def run_agent(
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result, default=str),
+                        "content": json.dumps(
+                            _compress_tool_result(real_name, result),
+                            default=str,
+                        ),
                     })
 
                 messages.append({"role": "user", "content": tool_results})
