@@ -391,6 +391,60 @@ def cmd_codex_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gemini_setup(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.gemini_integration import install_gemini_config
+    with ui.activity(
+        "Configuring Gemini MCP integration",
+        success_message="Configured Gemini MCP integration",
+    ) as activity:
+        activity.update("Writing Gemini settings entry for hx")
+        status = install_gemini_config(root)
+        if not status.gemini_installed:
+            activity.note(
+                "Gemini CLI not found on PATH; config written anyway",
+                level="warning",
+            )
+    print(f"Wrote Gemini config in {status.config_path}")
+    print(
+        render_action_card(
+            "Gemini Connection Flow",
+            [
+                "Run `gemini` from this repository",
+                "hx MCP server will be available automatically",
+                "Use hex.context, repo.read, port.check tools",
+            ],
+            color=ui.color,
+        )
+    )
+    return 0
+
+
+def cmd_gemini_status(args: argparse.Namespace) -> int:
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.gemini_integration import gemini_status
+    with ui.activity(
+        "Inspecting Gemini integration state",
+        success_message="Inspected Gemini integration state",
+    ):
+        status = gemini_status()
+    payload = {
+        "gemini_installed": status.gemini_installed,
+        "config_path": str(status.config_path),
+        "hx_command": status.hx_command,
+        "hx_configured": status.hx_configured,
+    }
+    print(json.dumps(payload, indent=2))
+    if not status.gemini_installed:
+        print("Next: install Gemini CLI, then run `hx gemini setup`.")
+    elif not status.hx_configured:
+        print("Next: run `hx gemini setup`.")
+    else:
+        print("Next: launch `gemini` in this repo.")
+    return 0
+
+
 def cmd_memory_summarize(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -1060,6 +1114,15 @@ def build_parser() -> argparse.ArgumentParser:
     codex_setup.set_defaults(func=cmd_codex_setup)
     codex_status_cmd = codex_sub.add_parser("status")
     codex_status_cmd.set_defaults(func=cmd_codex_status)
+
+    gemini_parser = subparsers.add_parser("gemini")
+    gemini_sub = gemini_parser.add_subparsers(
+        dest="gemini_command", required=True,
+    )
+    gemini_setup = gemini_sub.add_parser("setup")
+    gemini_setup.set_defaults(func=cmd_gemini_setup)
+    gemini_status_cmd = gemini_sub.add_parser("status")
+    gemini_status_cmd.set_defaults(func=cmd_gemini_status)
 
     memory_parser = subparsers.add_parser("memory")
     memory_sub = memory_parser.add_subparsers(dest="memory_command", required=True)
