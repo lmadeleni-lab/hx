@@ -106,6 +106,7 @@ def render_startup_screen(version: str, *, color: bool = False) -> str:
             f"  {paint('hx init', 'cyan', color=color)}",
             f"  {paint('hx hex build', 'cyan', color=color)}",
             f"  {paint('hx hex validate', 'cyan', color=color)}",
+            f"  {paint('hx codex setup', 'cyan', color=color)}",
             f"  {paint('hx mcp serve --transport stdio', 'cyan', color=color)}",
             "",
             prereqs,

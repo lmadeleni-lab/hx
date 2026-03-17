@@ -147,6 +147,8 @@ def approve_patch(
 
 
 def commit_patch(root: Path, task_id: str) -> dict[str, Any]:
+    from hx.memory import summarize_memory
+
     task = load_task(root, task_id)
     port_check = task.port_check
     verification = task.proofs.get("verification", {})
@@ -206,6 +208,7 @@ def commit_patch(root: Path, task_id: str) -> dict[str, Any]:
             metrics=task.metrics,
         )
         finish_run(root, task.audit_run_id, "ok")
+    summarize_memory(root)
     return {"task_id": task_id, "status": task.status}
 
 

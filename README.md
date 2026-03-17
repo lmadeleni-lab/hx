@@ -76,6 +76,19 @@ hx hex validate
 hx mcp serve --transport stdio
 ```
 
+If you are connecting through Codex CLI, the native flow is:
+
+```bash
+hx codex setup
+codex --login
+codex
+```
+
+`hx codex setup` writes the MCP entry for the current repo into
+`~/.codex/config.toml`. After that, Codex should spawn `hx` automatically. You
+should not keep `hx mcp serve --transport stdio` running manually in a second
+terminal when using Codex.
+
 Running `hx` with no subcommand in a macOS terminal now shows the startup
 screen and quick commands, similar to an interactive CLI landing view. During
 command execution, `hx` also shows colored status updates and a live
@@ -95,6 +108,8 @@ Optional interactive controls:
 - `hx hex parent show <parent_id>` renders the coarse-grained parent hex group
 - `hx hex parent watch <parent_id>` opens a live parent-focused mini-TUI with
   neighboring parents, risky boundary ports, and summary panels
+- `hx memory summarize` refreshes restart-ready summaries in `.hx/state/`
+- `hx resume` loads the compacted repo restart context
 
 Validate the shipped example benchmark battery from the `hx` source checkout:
 
@@ -112,7 +127,8 @@ only execution boundary.
 
 See [docs/adoption.md](docs/adoption.md) for the golden path, then
 [docs/hex.md](docs/hex.md), [docs/contracts.md](docs/contracts.md),
-[docs/metrics.md](docs/metrics.md), [docs/benchmarking.md](docs/benchmarking.md),
+[docs/metrics.md](docs/metrics.md), [docs/memory.md](docs/memory.md),
+[docs/benchmarking.md](docs/benchmarking.md),
 [docs/security.md](docs/security.md), [docs/codex.md](docs/codex.md),
 [docs/gemini.md](docs/gemini.md), [docs/release.md](docs/release.md),
 [docs/roadmap.md](docs/roadmap.md), [BENCHMARK.md](BENCHMARK.md),

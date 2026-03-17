@@ -182,6 +182,8 @@ def run_benchmark(
     *,
     progress: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    from hx.memory import summarize_memory
+
     progress = progress or (lambda _event, _payload: None)
     progress("load_policy", {"root": str(root)})
     policy = load_policy(root)
@@ -483,6 +485,7 @@ def run_benchmark(
     lines.append("")
     lines.append(report_markdown(root))
     output_path.write_text("\n".join(lines) + "\n")
+    summarize_memory(root)
     return report
 
 

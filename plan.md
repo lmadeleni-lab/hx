@@ -555,6 +555,10 @@ Completed this cycle:
   dashboards
 - added heuristic parent rollup metrics, summaries, and scheduler/reporting
   hooks while keeping cell-based authorization primary
+- added native Codex onboarding commands so `hx` can configure MCP setup and
+  guide users into the `codex --login` flow without requiring manual config
+- added a first memory/context-compaction foundation under `.hx/state/` with
+  repo, parent, cell, open-thread, and session summaries plus `hx resume`
 
 ## 8. Strategy When Issues Arise
 

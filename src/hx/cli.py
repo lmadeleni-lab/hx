@@ -17,8 +17,10 @@ from hx.benchmark import (
     run_benchmark,
     validate_task_battery,
 )
+from hx.codex_integration import codex_status, install_codex_config
 from hx.config import DEFAULT_HEXMAP, DEFAULT_POLICY, ensure_hx_dirs, repo_root
 from hx.hexmap import build_hexmap, load_hexmap, save_hexmap, validate_hexmap
+from hx.memory import memory_status, resume_context, summarize_memory
 from hx.metrics import summarize_runs, top_risky_ports
 from hx.parents import parent_groups_overview, parent_summary, resolve_parent_group
 from hx.templates import (
@@ -110,6 +112,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         activity.update("Writing BENCHMARK.md")
         write_if_missing(root / "BENCHMARK.md", benchmark_template(), force=args.force)
     print(f"Initialized hx templates in {root}")
+    print("Next: hx codex setup")
+    print("Then: codex --login")
+    print("Then: codex")
     return 0
 
 
@@ -304,6 +309,98 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("hx doctor found no blocking issues")
     print("Supported runtime: macOS terminal")
     print("Prerequisites detected: python3, git")
+    status = codex_status()
+    if status.codex_installed:
+        print("Codex CLI detected")
+        print(
+            "Codex MCP config: "
+            + ("present for hx" if status.hx_configured else f"missing in {status.config_path}")
+        )
+    else:
+        print("Codex CLI not detected; install Codex CLI before `hx codex setup`")
+    return 0
+
+
+def cmd_codex_setup(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    with ui.activity(
+        "Configuring Codex MCP integration",
+        success_message="Configured Codex MCP integration",
+    ) as activity:
+        activity.update("Writing ~/.codex/config.toml entry for hx")
+        status = install_codex_config(root)
+        if not status.codex_installed:
+            activity.note(
+                "Codex CLI was not found on PATH; config was written anyway",
+                level="warning",
+            )
+    print(f"Wrote Codex config in {status.config_path}")
+    print(f"Configured hx command: {status.hx_command}")
+    print("Next:")
+    print("1. Run `codex --login` if you have not signed in yet")
+    print("2. Run `codex` from this repository")
+    print("3. Let Codex spawn hx automatically through MCP")
+    print("Do not keep `hx mcp serve --transport stdio` running manually when using Codex.")
+    return 0
+
+
+def cmd_codex_status(args: argparse.Namespace) -> int:
+    ui = TerminalUI(mode=args.ui_mode)
+    with ui.activity(
+        "Inspecting Codex integration state",
+        success_message="Inspected Codex integration state",
+    ):
+        status = codex_status()
+    payload = {
+        "codex_installed": status.codex_installed,
+        "config_path": str(status.config_path),
+        "hx_command": status.hx_command,
+        "hx_configured": status.hx_configured,
+    }
+    print(json.dumps(payload, indent=2))
+    if not status.codex_installed:
+        print("Next: install Codex CLI, then run `hx codex setup`.")
+    elif not status.hx_configured:
+        print("Next: run `hx codex setup`.")
+    else:
+        print("Next: run `codex --login` if needed, then launch `codex` in this repo.")
+    return 0
+
+
+def cmd_memory_summarize(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    with ui.activity(
+        "Compacting repo context into state summaries",
+        success_message="Compacted repo context into state summaries",
+    ):
+        payload = summarize_memory(root)
+    print(json.dumps(payload if args.json else payload["repo_summary"], indent=2))
+    return 0
+
+
+def cmd_memory_status(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    with ui.activity(
+        "Inspecting memory state",
+        success_message="Inspected memory state",
+    ):
+        payload = memory_status(root)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    with ui.activity(
+        "Loading resume context",
+        success_message="Loaded resume context",
+    ):
+        payload = resume_context(root)
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -470,6 +567,24 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")
     init_parser.set_defaults(func=cmd_init)
+
+    codex_parser = subparsers.add_parser("codex")
+    codex_sub = codex_parser.add_subparsers(dest="codex_command", required=True)
+    codex_setup = codex_sub.add_parser("setup")
+    codex_setup.set_defaults(func=cmd_codex_setup)
+    codex_status_cmd = codex_sub.add_parser("status")
+    codex_status_cmd.set_defaults(func=cmd_codex_status)
+
+    memory_parser = subparsers.add_parser("memory")
+    memory_sub = memory_parser.add_subparsers(dest="memory_command", required=True)
+    memory_summarize = memory_sub.add_parser("summarize")
+    memory_summarize.add_argument("--json", action="store_true")
+    memory_summarize.set_defaults(func=cmd_memory_summarize)
+    memory_status_cmd = memory_sub.add_parser("status")
+    memory_status_cmd.set_defaults(func=cmd_memory_status)
+
+    resume_parser = subparsers.add_parser("resume")
+    resume_parser.set_defaults(func=cmd_resume)
 
     hex_parser = subparsers.add_parser("hex")
     hex_sub = hex_parser.add_subparsers(dest="hex_command", required=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 from hx.cli import build_parser, doctor_problems, main, render_startup_screen
@@ -25,6 +26,7 @@ def test_render_startup_screen_mentions_macos_prereqs() -> None:
     assert "supported target: macOS terminal sessions" in screen
     assert "python3 (3.11+)" in screen
     assert "git (Xcode Command Line Tools is fine)" in screen
+    assert "hx codex setup" in screen
 
 
 def test_render_colored_startup_screen_can_include_ansi() -> None:
@@ -65,3 +67,34 @@ def test_format_status_line_includes_thinking_label() -> None:
     line = format_status_line("Indexing cell topology", kind="working", frame="⠋", color=False)
     assert "Indexing cell topology" in line
     assert "thinking" in line
+
+
+def test_init_prints_codex_next_steps(tmp_path: Path, capsys) -> None:
+    assert main(["--root", str(tmp_path), "--ui-mode", "quiet", "init"]) == 0
+    out = capsys.readouterr().out
+    assert "Next: hx codex setup" in out
+    assert "Then: codex --login" in out
+
+
+def test_codex_setup_writes_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    assert main(["--root", str(tmp_path), "--ui-mode", "quiet", "codex", "setup"]) == 0
+    config = (fake_home / ".codex" / "config.toml").read_text()
+    assert "[mcp_servers.hx]" in config
+    assert str(tmp_path.resolve()) in config
+    out = capsys.readouterr().out
+    assert "codex --login" in out
+
+
+def test_codex_status_reports_config(monkeypatch, tmp_path: Path, capsys) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    assert main(["--root", str(tmp_path), "--ui-mode", "quiet", "codex", "setup"]) == 0
+    capsys.readouterr()
+    assert main(["--root", str(tmp_path), "--ui-mode", "quiet", "codex", "status"]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out.split("Next:", 1)[0])
+    assert payload["hx_configured"] is True

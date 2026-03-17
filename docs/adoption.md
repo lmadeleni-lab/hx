@@ -39,6 +39,17 @@ Review `HEXMAP.json` and make sure:
 hx mcp serve --transport stdio
 ```
 
+If you are using Codex CLI, prefer the native guided setup instead:
+
+```bash
+hx codex setup
+codex --login
+codex
+```
+
+In the Codex flow, do not manually keep `hx mcp serve --transport stdio`
+running. Codex should launch `hx` for you through MCP.
+
 To inspect the local topology before starting work:
 
 ```bash
@@ -88,10 +99,12 @@ Use:
 
 ```bash
 hx log
+hx memory summarize
+hx resume
 ```
 
 This gives a run summary plus the top risky ports by current policy-oriented
-risk scoring.
+risk scoring, and produces compacted restart context under `.hx/state/`.
 
 ## 6. Run a Benchmark
 
