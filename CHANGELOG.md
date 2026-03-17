@@ -28,3 +28,13 @@ The format is intentionally simple while the project is pre-1.0.
   than implying editable mode is the primary user install flow
 - benchmark docs and shipped examples now distinguish starter batteries from
   stronger future evaluation suites
+
+## [0.1.1] - 2026-03-17
+
+### Fixed
+
+- Single-cell repositories built via `hx hex build` no longer use a root glob that
+  excludes top-level files like `HEXMAP.json` (avoids "outside hexmap" catch-22).
+- `repo.stage_patch` now normalizes and validates staged patches into `git apply`
+  compatible unified diffs, preventing `port.check` failures like "No valid patches
+  in input" when an agent provides apply_patch-style text.
