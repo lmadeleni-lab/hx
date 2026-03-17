@@ -208,7 +208,8 @@ def test_render_watch_dashboard_includes_runs_and_events(tmp_path: Path) -> None
         color=False,
         width=100,
     )
-    assert "hx hex watch" in dashboard
+    assert "HX //" in dashboard
+    assert "hex watch  cell=core" in dashboard
     assert "Recent Runs" in dashboard
     assert "Recent Events" in dashboard
     assert "cmd.run" in dashboard
@@ -384,6 +385,7 @@ def test_render_parent_watch_dashboard_includes_parent_panels(tmp_path: Path) ->
         color=False,
         width=100,
     )
-    assert "hx parent watch" in dashboard
+    assert "HX //" in dashboard
+    assert "parent watch  parent=parent_core" in dashboard
     assert "Neighboring Parents" in dashboard
     assert "Parent Summary" in dashboard

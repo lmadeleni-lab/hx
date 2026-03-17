@@ -33,6 +33,7 @@ from hx.templates import (
 from hx.ui import (
     TerminalUI,
     clear_screen,
+    render_action_card,
     render_hex_view,
     render_parent_view,
     render_parent_watch_dashboard,
@@ -112,9 +113,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         activity.update("Writing BENCHMARK.md")
         write_if_missing(root / "BENCHMARK.md", benchmark_template(), force=args.force)
     print(f"Initialized hx templates in {root}")
-    print("Next: hx codex setup")
-    print("Then: codex --login")
-    print("Then: codex")
+    print(
+        render_action_card(
+            "First Run Flow",
+            [
+                "hx codex setup",
+                "codex --login",
+                "codex",
+            ],
+            color=ui.color,
+        )
+    )
     return 0
 
 
@@ -337,10 +346,17 @@ def cmd_codex_setup(args: argparse.Namespace) -> int:
             )
     print(f"Wrote Codex config in {status.config_path}")
     print(f"Configured hx command: {status.hx_command}")
-    print("Next:")
-    print("1. Run `codex --login` if you have not signed in yet")
-    print("2. Run `codex` from this repository")
-    print("3. Let Codex spawn hx automatically through MCP")
+    print(
+        render_action_card(
+            "Codex Connection Flow",
+            [
+                "Run `codex --login` if you have not signed in yet",
+                "Run `codex` from this repository",
+                "Let Codex spawn hx automatically through MCP",
+            ],
+            color=ui.color,
+        )
+    )
     print("Do not keep `hx mcp serve --transport stdio` running manually when using Codex.")
     return 0
 

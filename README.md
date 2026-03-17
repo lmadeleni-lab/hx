@@ -91,7 +91,8 @@ terminal when using Codex.
 
 Running `hx` with no subcommand in a macOS terminal now shows the startup
 screen and quick commands, similar to an interactive CLI landing view. During
-command execution, `hx` also shows colored status updates and a live
+command execution, `hx` now keeps a branded terminal shell visible with a
+persistent `hx` header, colored phase-aware status updates, and a live
 thinking/loading indicator on `stderr` so users can see what is happening
 without breaking machine-readable output on `stdout`.
 

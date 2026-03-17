@@ -87,6 +87,7 @@ hx --ui-mode expanded hex watch <cell_id> --radius 1
 
 `hex watch` currently shows:
 
+- a branded `hx` shell header that stays at the top of the redraw
 - the live hex neighborhood panel
 - recent audit runs with status
 - recent audit events from recorded runs
@@ -119,6 +120,7 @@ hx --ui-mode expanded hex parent watch <parent_id>
 
 `hx hex parent watch` extends the mini-TUI with:
 
+- the branded `hx` shell header and live status rail
 - the parent neighborhood panel
 - neighboring parents
 - risky boundary ports

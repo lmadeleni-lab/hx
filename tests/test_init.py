@@ -23,6 +23,7 @@ def test_init_scaffolds_files(tmp_path: Path) -> None:
 
 def test_render_startup_screen_mentions_macos_prereqs() -> None:
     screen = render_startup_screen()
+    assert "HX //" in screen
     assert "supported target: macOS terminal sessions" in screen
     assert "python3 (3.11+)" in screen
     assert "git (Xcode Command Line Tools is fine)" in screen
@@ -72,8 +73,9 @@ def test_format_status_line_includes_thinking_label() -> None:
 def test_init_prints_codex_next_steps(tmp_path: Path, capsys) -> None:
     assert main(["--root", str(tmp_path), "--ui-mode", "quiet", "init"]) == 0
     out = capsys.readouterr().out
-    assert "Next: hx codex setup" in out
-    assert "Then: codex --login" in out
+    assert "First Run Flow" in out
+    assert "hx codex setup" in out
+    assert "codex --login" in out
 
 
 def test_codex_setup_writes_config(monkeypatch, tmp_path: Path, capsys) -> None:

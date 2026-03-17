@@ -11,6 +11,7 @@ from shutil import get_terminal_size
 from textwrap import shorten
 from typing import Any, TextIO
 
+from hx import __version__
 from hx.authz import allowed_cells
 from hx.models import AuditRun, HexMap, Port
 from hx.parents import parent_group_map, parent_summary
@@ -27,6 +28,14 @@ COLORS = {
 }
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SIDE_LABELS = ["N", "NE", "SE", "S", "SW", "NW"]
+ASCII_LOGO = [
+    "██╗  ██╗██╗  ██╗",
+    "██║  ██║╚██╗██╔╝",
+    "███████║ ╚███╔╝ ",
+    "██╔══██║ ██╔██╗ ",
+    "██║  ██║██╔╝ ██╗",
+    "╚═╝  ╚═╝╚═╝  ╚═╝",
+]
 
 
 def is_tty(stream: TextIO | None) -> bool:
@@ -73,12 +82,13 @@ def format_status_line(
     *,
     kind: str,
     frame: str | None = None,
+    phase: str | None = None,
     color: bool = False,
 ) -> str:
     if kind == "working":
         glyph = paint(frame or "…", "cyan", color=color)
-        label = paint("thinking", "dim", color=color)
-        return f"{glyph} {message} {label}"
+        label = paint(phase or "thinking", "dim", color=color)
+        return f"{glyph} {label}  {message}"
     if kind == "success":
         return f"{paint('✓', 'bold', 'green', color=color)} {message}"
     if kind == "error":
@@ -88,19 +98,102 @@ def format_status_line(
     return message
 
 
+def infer_phase(message: str) -> str:
+    lowered = message.lower()
+    mapping = [
+        ("init", "boot"),
+        ("build", "mapping"),
+        ("scan", "mapping"),
+        ("validate", "checking"),
+        ("render", "rendering"),
+        ("watch", "live"),
+        ("proof", "proof"),
+        ("commit", "commit"),
+        ("benchmark", "benchmark"),
+        ("codex", "connect"),
+        ("memory", "compact"),
+        ("resume", "resume"),
+        ("doctor", "diagnose"),
+        ("log", "review"),
+        ("replay", "replay"),
+    ]
+    for token, phase in mapping:
+        if token in lowered:
+            return phase
+    return "thinking"
+
+
+def render_brand_header(
+    version: str,
+    *,
+    phase: str,
+    detail: str,
+    width: int | None = None,
+    color: bool = False,
+) -> str:
+    width = max(width or terminal_width(), 72)
+    inner = width - 4
+    logo_width = max(len(line) for line in ASCII_LOGO)
+    meta = [
+        paint(f"HX // {version}", "bold", "cyan", color=color),
+        paint("hex-governed local coding harness", "blue", color=color),
+        paint(f"phase: {phase}", "bold", "yellow", color=color),
+        paint(detail, "dim", color=color),
+    ]
+    height = max(len(ASCII_LOGO), len(meta))
+    shell_lines = []
+    for index in range(height):
+        left = ASCII_LOGO[index] if index < len(ASCII_LOGO) else ""
+        right = meta[index] if index < len(meta) else ""
+        line = f"{left:<{logo_width}}   {right}"
+        shell_lines.append(f"│ {line[:inner]:<{inner}} │")
+    return "\n".join(
+        [
+            f"┌{'─' * (width - 2)}┐",
+            *shell_lines,
+            f"└{'─' * (width - 2)}┘",
+        ]
+    )
+
+
+def render_action_card(
+    title: str,
+    steps: list[str],
+    *,
+    width: int | None = None,
+    color: bool = False,
+) -> str:
+    width = min(max(width or terminal_width(), 56), 92)
+    inner = width - 4
+    lines = [
+        f"┌{'─' * (width - 2)}┐",
+        f"│ {paint(title, 'bold', 'green', color=color):<{inner}} │",
+        f"├{'─' * (width - 2)}┤",
+    ]
+    for index, step in enumerate(steps, start=1):
+        text = f"{index}. {step}"
+        lines.append(f"│ {text[:inner]:<{inner}} │")
+    lines.append(f"└{'─' * (width - 2)}┘")
+    return "\n".join(lines)
+
+
 def render_startup_screen(version: str, *, color: bool = False) -> str:
+    header = render_brand_header(
+        version,
+        phase="ready",
+        detail="macOS terminal harness",
+        color=color,
+    )
     title = paint(f"hx {version}", "bold", "cyan", color=color)
     subtitle = paint("hex-governed local coding harness", "blue", color=color)
     target = paint("supported target: macOS terminal sessions", "yellow", color=color)
     quick = paint("Quick start", "bold", "green", color=color)
     prereqs = paint("Prerequisites", "bold", "green", color=color)
-    return "\n".join(
+    return header + "\n" + "\n".join(
         [
-            "┌──────────────────────────────────────────────────────────────┐",
-            f"│ {title:<61}│",
-            f"│ {subtitle:<61}│",
-            f"│ {target:<61}│",
-            "└──────────────────────────────────────────────────────────────┘",
+            title,
+            subtitle,
+            target,
             "",
             quick,
             f"  {paint('hx init', 'cyan', color=color)}",
@@ -139,7 +232,12 @@ class Activity:
             self._thread.start()
         else:
             self.ui.write_line(
-                format_status_line(self._message, kind="working", color=self.ui.color)
+                format_status_line(
+                    self._message,
+                    kind="working",
+                    phase=infer_phase(self._message),
+                    color=self.ui.color,
+                )
             )
         return self
 
@@ -172,7 +270,13 @@ class Activity:
                 message = self._message
                 self._frame_index += 1
             self.ui.write_inline(
-                format_status_line(message, kind="working", frame=frame, color=self.ui.color)
+                format_status_line(
+                    message,
+                    kind="working",
+                    frame=frame,
+                    phase=infer_phase(message),
+                    color=self.ui.color,
+                )
             )
             time.sleep(0.08)
 
@@ -191,8 +295,10 @@ class TerminalUI:
         self.mode = resolve_ui_mode(mode, self.stream)
         self.color = should_use_color(self.stream)
         self.spinner = self.mode in {"normal", "expanded"} and should_use_spinner(self.stream)
+        self._shell_rendered = False
 
     def activity(self, message: str, *, success_message: str | None = None) -> Activity:
+        self.ensure_shell(phase=infer_phase(message), detail=message)
         return Activity(self, message, success_message=success_message)
 
     def note(self, message: str, *, level: str = "info") -> None:
@@ -210,6 +316,19 @@ class TerminalUI:
         label, color_name = labels.get(level, ("info", "blue"))
         prefix = paint(f"[{label}]", "bold", color_name, color=self.color)
         self.write_line(f"{prefix} {message}")
+
+    def ensure_shell(self, *, phase: str, detail: str) -> None:
+        if self.mode == "quiet" or self._shell_rendered:
+            return
+        self.write_line(
+            render_brand_header(
+                __version__,
+                phase=phase,
+                detail=detail,
+                color=self.color,
+            )
+        )
+        self._shell_rendered = True
 
     def write_inline(self, text: str) -> None:
         self.stream.write("\r\033[2K" + text)
@@ -417,17 +536,21 @@ def render_watch_dashboard(
     )
     right_sections.append(right_events)
     timestamp = datetime.now().strftime("%H:%M:%S")
-    header_text = (
-        f"hx hex watch  cell={active_cell_id}  radius=R{radius}  "
-        f"tick={tick}  interval={interval_s:.1f}s  {timestamp}"
-    )
-    header = paint(
-        header_text,
-        "bold",
-        "cyan",
+    header = render_brand_header(
+        __version__,
+        phase="live",
+        detail=(
+            f"hex watch  cell={active_cell_id}  radius=R{radius}  "
+            f"tick={tick}  interval={interval_s:.1f}s  {timestamp}"
+        ),
+        width=width,
         color=color,
     )
-    footer = paint("Ctrl-C to exit live watch", "dim", color=color)
+    footer = paint(
+        "status rail: live topology | audit runs | events | Ctrl-C to exit",
+        "dim",
+        color=color,
+    )
     right_column: list[str] = []
     for index, section in enumerate(right_sections):
         if index:
@@ -526,19 +649,22 @@ def render_parent_watch_dashboard(
         color=color,
     )
     timestamp = datetime.now().strftime("%H:%M:%S")
-    header = paint(
-        (
-            f"hx parent watch  parent={parent_id}  tick={tick}  "
-            "interval="
-            f"{interval_s:.1f}s  risk="
-            f"{summary['metrics']['parent_architecture_potential']}  "
-            f"{timestamp}"
+    header = render_brand_header(
+        __version__,
+        phase="live",
+        detail=(
+            f"parent watch  parent={parent_id}  tick={tick}  "
+            f"interval={interval_s:.1f}s  risk="
+            f"{summary['metrics']['parent_architecture_potential']}  {timestamp}"
         ),
-        "bold",
-        "cyan",
+        width=width,
         color=color,
     )
-    footer = paint("Ctrl-C to exit parent watch", "dim", color=color)
+    footer = paint(
+        "status rail: parent topology | boundary risk | events | Ctrl-C to exit",
+        "dim",
+        color=color,
+    )
     right_column = []
     for panel in [neighbor_panel, risk_panel, event_panel, summary_panel]:
         if right_column:
