@@ -178,6 +178,111 @@ def derive_parent_neighbors(
     return parent_neighbors
 
 
+def _parent_group_connected(hexmap: HexMap, group: ParentGroup) -> bool:
+    """Check that the subgraph induced by group members is connected."""
+    members = group.member_cells()
+    if len(members) <= 1:
+        return True
+    member_set = set(members)
+    visited: set[str] = set()
+    queue = [members[0]]
+    visited.add(members[0])
+    while queue:
+        current = queue.pop()
+        cell = hexmap.cell(current)
+        for neighbor in cell.neighbors:
+            if neighbor in member_set and neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+    return visited == member_set
+
+
+def parent_occupation_fraction(
+    hexmap: HexMap, group: ParentGroup,
+) -> float:
+    """Fraction of port slots occupied by non-None ports in the group."""
+    total = 0
+    occupied = 0
+    for cell_id in group.member_cells():
+        cell = hexmap.cell(cell_id)
+        for port in cell.ports:
+            total += 1
+            if port is not None:
+                occupied += 1
+    if total == 0:
+        return 0.0
+    return round(occupied / total, 4)
+
+
+def parent_boundary_occupation(
+    hexmap: HexMap, group: ParentGroup,
+) -> float:
+    """Fraction of boundary-facing ports that are occupied.
+
+    Only counts ports whose neighbor is outside the group.
+    This is the quantity relevant to percolation at the boundary.
+    """
+    members = set(group.member_cells())
+    total_boundary = 0
+    occupied_boundary = 0
+    for cell_id in members:
+        cell = hexmap.cell(cell_id)
+        for i, neighbor in enumerate(cell.neighbors):
+            if neighbor is not None and neighbor not in members:
+                total_boundary += 1
+                port = cell.ports[i] if i < len(cell.ports) else None
+                if port is not None:
+                    occupied_boundary += 1
+    if total_boundary == 0:
+        return 0.0
+    return round(occupied_boundary / total_boundary, 4)
+
+
+def parent_connectivity_strength(
+    hexmap: HexMap, group: ParentGroup,
+) -> float:
+    """Algebraic connectivity proxy for the parent group.
+
+    For small groups (<=7 cells), computes the minimum vertex
+    connectivity: the minimum number of cells whose removal
+    disconnects the group. Normalized to [0,1].
+    This approximates the spectral gap (Cheeger inequality).
+    """
+    members = group.member_cells()
+    if len(members) <= 2:
+        return 1.0 if _parent_group_connected(hexmap, group) else 0.0
+
+    min_cut = len(members)  # upper bound
+
+    # For each member, check if removing it disconnects the group
+    for remove_id in members:
+        remaining = [m for m in members if m != remove_id]
+        if len(remaining) <= 1:
+            continue
+        remaining_set = set(remaining)
+        # BFS from first remaining
+        visited: set[str] = set()
+        queue = [remaining[0]]
+        visited.add(remaining[0])
+        while queue:
+            current = queue.pop()
+            cell = hexmap.cell(current)
+            for neighbor in cell.neighbors:
+                if neighbor in remaining_set and neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        if visited != remaining_set:
+            min_cut = 1
+            break
+
+    if min_cut > 1:
+        # Group survives all single-vertex removals
+        # Normalize: min_cut / (n-1) gives [0,1]
+        min_cut = min(min_cut, len(members) - 1)
+
+    return round(min_cut / max(len(members) - 1, 1), 4)
+
+
 def validate_parent_groups(hexmap: HexMap) -> list[str]:
     groups = get_parent_groups(hexmap)
     errors: list[str] = []
@@ -219,6 +324,13 @@ def validate_parent_groups(hexmap: HexMap) -> list[str]:
                     f"{group.parent_id}: child {child} is not radius-1 reachable from center "
                     f"{group.center_cell_id} without override justification"
                 )
+
+    # Connectedness check for each parent group
+    for group in groups:
+        if not _parent_group_connected(hexmap, group):
+            errors.append(
+                f"{group.parent_id}: member cells are not connected"
+            )
 
     derived_by_id = {group.parent_id: derive_parent_neighbors(hexmap, group) for group in groups}
     for group in groups:
@@ -281,7 +393,11 @@ def parent_boundary_ports(hexmap: HexMap, parent_id: str) -> list[dict[str, Any]
 
 
 def parent_rollup_metrics(root: Path, hexmap: HexMap, parent_id: str) -> dict[str, Any]:
-    from hx.metrics import load_port_history, port_risk_snapshot
+    from hx.metrics import (
+        _normalized_entropy,
+        load_port_history,
+        port_risk_snapshot,
+    )
 
     history = load_port_history(root)
     boundary_ports = parent_boundary_ports(hexmap, parent_id)
@@ -301,43 +417,76 @@ def parent_rollup_metrics(root: Path, hexmap: HexMap, parent_id: str) -> dict[st
                 external_edges += 1
     total_edges = internal_edges + external_edges
     cohesion = round(internal_edges / total_edges, 4) if total_edges else 1.0
+
+    # Pooled entropy: collect all category events across boundary ports
+    all_category_events: list[list[str]] = []
+    for item in boundary_ports:
+        entry = history.get(item["port_id"], {})
+        for change in entry.get("changes", []):
+            cats = change.get("categories", [])
+            if cats:
+                all_category_events.append(cats)
+    pooled_entropy = _normalized_entropy(all_category_events)
+
+    occ_fraction = parent_occupation_fraction(hexmap, group)
+
+    from hx.metrics import _bounded_ratio, hex_isoperimetric_bound
+
+    churn_total = round(
+        sum(float(s.get("churn", 0.0)) for s in snapshots), 4,
+    )
+    bdry_occ = parent_boundary_occupation(hexmap, group)
+    connectivity = parent_connectivity_strength(hexmap, group)
+
+    # Normalized boundary pressure (isoperimetric)
+    n_members = len(members)
+    iso_bound = hex_isoperimetric_bound(n_members)
+    norm_pressure = (
+        round(len(boundary_ports) / iso_bound, 4)
+        if iso_bound > 0 else 0.0
+    )
+
+    # Architecture potential aligned with task-level formula
+    # All components in [0,1], weights sum to 1.0
+    churn_norm = _bounded_ratio(churn_total, 5.0)
+    potential = round(
+        min(
+            (norm_pressure * 0.25)
+            + (pooled_entropy * 0.2)
+            + (churn_norm * 0.15)
+            + ((1.0 - cohesion) * 0.2)
+            + ((1.0 - connectivity) * 0.1)
+            + (pooled_entropy * churn_norm * 0.1),
+            1.0,
+        ),
+        4,
+    )
+
     return {
         "parent_boundary_pressure": round(float(len(boundary_ports)), 4),
+        "parent_boundary_pressure_normalized": norm_pressure,
         "parent_port_pressure": round(
-            sum(float(snapshot.get("pressure", 0.0)) for snapshot in snapshots), 4
+            sum(float(s.get("pressure", 0.0)) for s in snapshots), 4,
         ),
-        "parent_churn": round(
-            sum(float(snapshot.get("churn", 0.0)) for snapshot in snapshots), 4
-        ),
-        "parent_entropy": round(
-            (
-                sum(float(snapshot.get("entropy", 0.0)) for snapshot in snapshots) / len(snapshots)
-                if snapshots
-                else 0.0
-            ),
-            4,
-        ),
-        "parent_architecture_potential": round(
-            min(
-                (
-                    (len(boundary_ports) * 0.3)
-                    + (sum(float(snapshot.get("entropy", 0.0)) for snapshot in snapshots) * 0.2)
-                    + (sum(float(snapshot.get("churn", 0.0)) for snapshot in snapshots) * 0.2)
-                    + ((1.0 - cohesion) * 0.3)
-                ),
-                1.0,
-            ),
-            4,
-        ),
+        "parent_churn": churn_total,
+        "parent_entropy": pooled_entropy,
+        "parent_architecture_potential": potential,
         "parent_cohesion": cohesion,
+        "parent_connectivity_strength": connectivity,
+        "parent_occupation_fraction": occ_fraction,
+        "parent_boundary_occupation": bdry_occ,
         "parent_summary_stability": 0.0,
         "metric_maturity": {
             "parent_boundary_pressure": "Heuristic",
+            "parent_boundary_pressure_normalized": "Isoperimetric",
             "parent_port_pressure": "Heuristic",
             "parent_churn": "Heuristic",
-            "parent_entropy": "Heuristic",
-            "parent_architecture_potential": "Heuristic",
+            "parent_entropy": "Pooled",
+            "parent_architecture_potential": "Aligned",
             "parent_cohesion": "Heuristic",
+            "parent_connectivity_strength": "Vertex-connectivity",
+            "parent_occupation_fraction": "Exact",
+            "parent_boundary_occupation": "Exact",
             "parent_summary_stability": "Heuristic",
         },
     }

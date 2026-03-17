@@ -13,6 +13,7 @@ from typing import Any
 from hx.audit import append_event, update_run
 from hx.authz import allowed_cells as calc_allowed_cells
 from hx.authz import authorize_paths
+from hx.config import STATE_DIR
 from hx.hexmap import load_hexmap, resolve_cell_id
 from hx.metrics import load_port_history, port_risk_snapshot
 from hx.models import Cell, HexMap, Port
@@ -22,6 +23,8 @@ from hx.policy import (
     require_human_for_breaking,
     strict_risk_threshold,
 )
+
+_SURFACES_CACHE = "surfaces.json"
 
 CHANGE_CATEGORIES = [
     "add_export",
@@ -127,6 +130,28 @@ SURFACE_EXTRACTORS: dict[str, Any] = {
 SCHEMA_EXTENSIONS = {".json", ".proto", ".sql", ".graphql", ".avsc"}
 
 
+def _load_surface_cache(root: Path) -> dict[str, Any]:
+    path = root / STATE_DIR / _SURFACES_CACHE
+    if path.exists():
+        return json.loads(path.read_text())
+    return {}
+
+
+def _save_surface_cache(root: Path, cache: dict[str, Any]) -> None:
+    path = root / STATE_DIR / _SURFACES_CACHE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cache, indent=2) + "\n")
+
+
+def rebuild_surface_cache(root: Path, hexmap: HexMap) -> dict[str, Any]:
+    """Rebuild and persist the surface cache for all cells."""
+    cache: dict[str, Any] = {}
+    for cell in hexmap.cells:
+        cache[cell.cell_id] = extract_cell_surface(root, cell)
+    _save_surface_cache(root, cache)
+    return cache
+
+
 def extract_cell_surface(root: Path, cell: Cell) -> dict[str, Any]:
     exports: set[str] = set()
     signatures: dict[str, str] = {}
@@ -184,10 +209,181 @@ def describe_port(hexmap: HexMap, cell_id: str, side_index: int) -> dict[str, An
 def port_surface(root: Path, hexmap: HexMap, cell_id: str, side_index: int) -> dict[str, Any]:
     cell = hexmap.cell(cell_id)
     port = cell.ports[side_index]
-    surface = extract_cell_surface(root, cell)
+    # Use cached surface if available
+    cache = _load_surface_cache(root)
+    if cell_id in cache:
+        surface = dict(cache[cell_id])
+    else:
+        surface = extract_cell_surface(root, cell)
     if port and port.surface.declared_exports:
         surface["exports"] = sorted(set(port.surface.declared_exports))
     return surface
+
+
+def find_triangles(hexmap: HexMap) -> list[tuple[str, str, str]]:
+    """Find all triangular cycles (A,B,C) in the hex neighbor graph."""
+    triangles: list[tuple[str, str, str]] = []
+    cell_ids = sorted(c.cell_id for c in hexmap.cells)
+    id_set = set(cell_ids)
+    seen: set[tuple[str, ...]] = set()
+
+    for a in cell_ids:
+        a_neighbors = {
+            n for n in hexmap.cell(a).neighbors if n is not None and n in id_set
+        }
+        for b in a_neighbors:
+            b_neighbors = {
+                n for n in hexmap.cell(b).neighbors
+                if n is not None and n in id_set
+            }
+            common = a_neighbors & b_neighbors
+            for c in common:
+                tri = tuple(sorted([a, b, c]))
+                if tri not in seen:
+                    seen.add(tri)
+                    triangles.append((tri[0], tri[1], tri[2]))
+    return triangles
+
+
+def _find_port_between(
+    hexmap: HexMap, from_cell: str, to_cell: str,
+) -> Port | None:
+    """Find the port on from_cell that faces to_cell."""
+    cell = hexmap.cell(from_cell)
+    for i, neighbor in enumerate(cell.neighbors):
+        if neighbor == to_cell:
+            port = cell.ports[i] if i < len(cell.ports) else None
+            return port
+    return None
+
+
+def dual_port_check(
+    hexmap: HexMap, cell_id: str, side_index: int,
+) -> list[str]:
+    """Check port duality and orientation consistency.
+
+    Validates:
+    - If both sides export the same symbol (non-orientable)
+    - If a port exists but has no reverse port on the neighbor
+    - If export/import pairing is inconsistent
+    """
+    warnings: list[str] = []
+    cell = hexmap.cell(cell_id)
+    port = cell.ports[side_index] if side_index < len(cell.ports) else None
+    neighbor_id = cell.neighbors[side_index]
+    if port is None or neighbor_id is None:
+        return warnings
+
+    exports = set(port.surface.declared_exports)
+
+    # Find the reverse port on the neighbor
+    reverse_port = _find_port_between(hexmap, neighbor_id, cell_id)
+
+    # Check: port exists but no reverse port (gauge defect)
+    if reverse_port is None and exports:
+        warnings.append(
+            f"{cell_id}[{side_index}]->{neighbor_id}: "
+            f"exports {sorted(exports)} but no reverse port exists"
+        )
+        return warnings
+
+    if reverse_port is None:
+        return warnings
+
+    neighbor_exports = set(reverse_port.surface.declared_exports)
+
+    # Check: both sides export the same symbol (non-orientable)
+    overlap = exports & neighbor_exports
+    if overlap:
+        both_export = (
+            port.direction == "export"
+            and reverse_port.direction == "export"
+        )
+        if both_export:
+            warnings.append(
+                f"{cell_id}[{side_index}]<->{neighbor_id}: "
+                f"both sides export {sorted(overlap)} — "
+                f"potential non-orientable boundary"
+            )
+
+    return warnings
+
+
+def holonomy_check(
+    hexmap: HexMap,
+    cycle: tuple[str, ...],
+) -> list[str]:
+    """Check export consistency around a cycle of cells.
+
+    For a cycle (A, B, C), verifies that port contracts compose
+    consistently around the loop (cocycle condition). Checks:
+    1. Transitivity: exports at edge i should propagate to edge i+1
+    2. Cocycle: direct A->C contract matches composed A->B->C path
+    Returns warning strings (empty = consistent).
+    """
+    warnings: list[str] = []
+    if len(cycle) < 3:
+        return warnings
+
+    # Collect exports along each directed edge of the cycle
+    edge_exports: list[set[str]] = []
+    for i in range(len(cycle)):
+        from_cell = cycle[i]
+        to_cell = cycle[(i + 1) % len(cycle)]
+        port = _find_port_between(hexmap, from_cell, to_cell)
+        if port is not None:
+            edge_exports.append(set(port.surface.declared_exports))
+        else:
+            edge_exports.append(set())
+
+    # Need at least 2 edges with exports to check composition
+    active_edges = [e for e in edge_exports if e]
+    if len(active_edges) < 2:
+        return warnings
+
+    # Check 1: Transitivity — symbols exported at edge i that
+    # are lost at edge i+1 (any amount of loss is a violation)
+    for i in range(len(cycle)):
+        current = edge_exports[i]
+        next_edge = edge_exports[(i + 1) % len(cycle)]
+        if current and next_edge:
+            lost = current - next_edge
+            if lost:
+                from_cell = cycle[i]
+                mid_cell = cycle[(i + 1) % len(cycle)]
+                to_cell = cycle[(i + 2) % len(cycle)]
+                warnings.append(
+                    f"holonomy: {from_cell}->{mid_cell}->{to_cell}: "
+                    f"exports {sorted(lost)} not propagated"
+                )
+
+    # Check 2: Cocycle condition — for each pair of non-adjacent
+    # cycle vertices, the direct port should be consistent with
+    # the composed path through intermediate vertices
+    for i in range(len(cycle)):
+        a = cycle[i]
+        c = cycle[(i + 2) % len(cycle)]
+        b = cycle[(i + 1) % len(cycle)]
+        # Direct A->C port
+        direct_port = _find_port_between(hexmap, a, c)
+        direct_exports = (
+            set(direct_port.surface.declared_exports)
+            if direct_port else set()
+        )
+        # Composed A->B exports intersected with B->C exports
+        ab_exports = edge_exports[i]
+        bc_exports = edge_exports[(i + 1) % len(cycle)]
+        composed = ab_exports & bc_exports if ab_exports and bc_exports else set()
+        # If direct and composed both have content, check consistency
+        if direct_exports and composed:
+            mismatch = direct_exports.symmetric_difference(composed)
+            if mismatch:
+                warnings.append(
+                    f"cocycle: {a}->{c} direct exports "
+                    f"{sorted(direct_exports)} != composed "
+                    f"{a}->{b}->{c} exports {sorted(composed)}"
+                )
+    return warnings
 
 
 def _surface_categories(before: dict[str, Any], after: dict[str, Any]) -> list[str]:

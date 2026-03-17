@@ -195,6 +195,13 @@ def commit_patch(root: Path, task_id: str) -> dict[str, Any]:
         task.port_check.get("impacted_ports", []),
         success=True,
     )
+    # Rebuild surface cache after applying patch (best-effort)
+    try:
+        from hx.hexmap import load_hexmap as _load_hm
+        from hx.ports import rebuild_surface_cache
+        rebuild_surface_cache(root, _load_hm(root))
+    except Exception:
+        pass
     task.status = "committed"
     task.metrics = compute_metrics(root, task.to_dict())
     save_task(root, task)
@@ -232,8 +239,57 @@ def abort_patch(root: Path, task_id: str) -> dict[str, Any]:
     return {"task_id": task_id, "aborted": True}
 
 
-def repo_read(root: Path, path: str) -> str:
-    return (root / path).read_text()
+def repo_read(
+    root: Path,
+    path: str,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+    max_bytes: int = 100_000,
+) -> dict[str, Any]:
+    """Read a file with optional chunking and size cap.
+
+    Returns a dict with content, metadata, and truncation info.
+    """
+    full_path = root / path
+    raw = full_path.read_bytes()
+    total_bytes = len(raw)
+    text = raw.decode(errors="replace")
+    lines = text.splitlines(keepends=True)
+    total_lines = len(lines)
+    warning = None
+
+    if offset == 0 and limit is None and total_bytes > max_bytes:
+        # Auto-truncate large files
+        char_budget = max_bytes
+        truncated_text = text[:char_budget]
+        lines_returned = truncated_text.count("\n")
+        warning = (
+            f"File is {total_bytes} bytes ({total_lines} lines). "
+            f"Showing first ~{lines_returned} lines. "
+            f"Use offset/limit to read specific sections."
+        )
+        return {
+            "content": truncated_text,
+            "total_lines": total_lines,
+            "offset": 0,
+            "lines_returned": lines_returned,
+            "truncated": True,
+            "warning": warning,
+        }
+
+    # Apply offset/limit
+    sliced = lines[offset: offset + limit if limit else None]
+    content = "".join(sliced)
+
+    return {
+        "content": content,
+        "total_lines": total_lines,
+        "offset": offset,
+        "lines_returned": len(sliced),
+        "truncated": limit is not None and offset + limit < total_lines,
+        "warning": warning,
+    }
 
 
 def repo_search(
@@ -241,28 +297,51 @@ def repo_search(
     query: str,
     globs: list[str] | None = None,
     path_filter: Any | None = None,
-) -> list[dict[str, Any]]:
-    # Include top-level files by default.
-    patterns = globs or ["**"]
-    results = []
+    *,
+    max_results: int = 20,
+    cell_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Search file contents with result limiting and cell pre-filtering.
+
+    Returns dict with matches, total_count, and capped flag.
+    """
+    # Use cell_paths for pre-filtering if provided
+    raw_patterns = cell_paths or globs or ["**/*"]
+    # Ensure patterns match files (append /* if ending with **)
+    patterns = []
+    for p in raw_patterns:
+        patterns.append(p)
+        if p.endswith("**"):
+            patterns.append(p + "/*")
+    results: list[dict[str, Any]] = []
+    total_count = 0
+    seen_files: set[str] = set()
+
     for pattern in patterns:
-        for path in root.glob(pattern):
-            if not path.is_file():
+        for file_path in root.glob(pattern):
+            if not file_path.is_file():
                 continue
-            rel_path = str(path.relative_to(root))
+            rel_path = str(file_path.relative_to(root))
+            if rel_path in seen_files:
+                continue
+            seen_files.add(rel_path)
             if path_filter is not None and not path_filter(rel_path):
                 continue
             try:
-                text = path.read_text()
+                text = file_path.read_text()
             except UnicodeDecodeError:
                 continue
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if query in line:
-                    results.append(
-                        {
+                    total_count += 1
+                    if len(results) < max_results:
+                        results.append({
                             "path": rel_path,
                             "line": lineno,
-                            "text": line.strip(),
-                        }
-                    )
-    return results
+                            "text": line.strip()[:200],
+                        })
+    return {
+        "matches": results,
+        "total_count": total_count,
+        "capped": total_count > max_results,
+    }

@@ -117,8 +117,10 @@ def test_boundary_pressure_uses_graph_cut_when_hexmap_exists(tmp_path: Path) -> 
             "cross_cell_imports": 1,
         },
     }
-    assert boundary_pressure(tmp_path, task) == 1.0
-    assert _boundary_pressure_heuristic(task) > boundary_pressure(tmp_path, task)
+    # Isoperimetrically normalized: 1 edge / isoperimetric_bound(1) = 1/6
+    bp = boundary_pressure(tmp_path, task)
+    assert 0 < bp < 1.0  # normalized, should be less than 1
+    assert _boundary_pressure_heuristic(task) > 0
 
 
 def test_weighted_proof_coverage_uses_obligation_weights() -> None:

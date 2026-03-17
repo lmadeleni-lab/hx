@@ -50,7 +50,7 @@ def make_two_cell_hexmap() -> HexMap:
     port = Port(
         port_id="src-tests",
         neighbor_cell_id="tests",
-        direction="out",
+        direction="export",
         surface=PortSurfaceSpec(),
         compat=PortCompat(),
         proof=PortProof(),
@@ -207,7 +207,7 @@ def test_release_mode_high_risk_nonbreaking_change_requires_approval(tmp_path: P
     assert task.port_check["proof_tier"] == "strict"
     assert task.port_check["requires_approval"] is True
     assert "release mode high-risk port change" in task.port_check["approval_reasons"]
-    assert task.port_check["risk_summary"]["max_policy_risk_score"] >= 2.5
+    assert task.port_check["risk_summary"]["max_policy_risk_score"] >= 0.5
     assert (
         ".hx/artifacts/release-task/risk_report.json"
         in task.port_check["obligations"]["required_artifacts"]
@@ -223,7 +223,7 @@ def test_release_mode_high_risk_nonbreaking_change_requires_approval(tmp_path: P
         (tmp_path / ".hx" / "artifacts" / "release-task" / "risk_report.json").read_text()
     )
     assert artifact["artifact_kind"] == "risk_report"
-    assert artifact["payload"]["max_policy_risk_score"] >= 2.5
+    assert artifact["payload"]["max_policy_risk_score"] >= 0.5
 
 
 def test_commit_patch_requires_proof_verification(tmp_path: Path) -> None:

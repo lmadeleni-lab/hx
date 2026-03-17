@@ -10,7 +10,7 @@ from hx.audit import append_event, finish_run, start_run, update_run
 from hx.authz import allowed_cells as calc_allowed_cells
 from hx.authz import authorize_path
 from hx.config import ensure_hx_dirs
-from hx.hexmap import load_hexmap, resolve_cell_id
+from hx.hexmap import adjacency_summary, load_hexmap, resolve_cell_id
 from hx.metrics import compute_metrics, parent_report, report_markdown, top_risky_ports
 from hx.parents import (
     parent_group_context,
@@ -126,9 +126,41 @@ class ToolRegistry:
             },
         ))
 
-        def _hex_context(active_cell_id: str, radius: int) -> dict[str, Any]:
+        def _hex_context(
+            active_cell_id: str, radius: int, detail: str = "summary",
+        ) -> dict[str, Any]:
             hexmap = load_hexmap(base)
             allowed = calc_allowed_cells(hexmap, active_cell_id, radius)
+
+            if detail == "summary":
+                # Cheap: counts + sparse graph only
+                file_count = 0
+                for cell_id in allowed:
+                    cell = hexmap.cell(cell_id)
+                    for pattern in cell.paths:
+                        file_count += sum(
+                            1 for p in base.glob(pattern) if p.is_file()
+                        )
+                edges = adjacency_summary(hexmap, allowed)
+                return {
+                    "cell_count": len(allowed),
+                    "file_count": file_count,
+                    "cells": [
+                        {"cell_id": cid, "summary": hexmap.cell(cid).summary}
+                        for cid in allowed
+                    ],
+                    "graph": [
+                        f"{e['from']}[{e['side']}]->{e['to']}"
+                        for e in edges
+                    ],
+                    "detail": "summary",
+                    "hint": (
+                        "Use detail='full' for complete file list "
+                        "and port details."
+                    ),
+                }
+
+            # detail == "full" — existing behavior
             files: list[str] = []
             summaries: list[dict[str, Any]] = []
             ports: list[dict[str, Any]] = []
@@ -141,21 +173,32 @@ class ToolRegistry:
                 })
                 for pattern in cell.paths:
                     files.extend(
-                        str(p.relative_to(base)) for p in base.glob(pattern) if p.is_file()
+                        str(p.relative_to(base))
+                        for p in base.glob(pattern) if p.is_file()
                     )
                 for index in range(6):
                     ports.append(describe_port(hexmap, cell_id, index))
-            return {"files": sorted(set(files)), "summaries": summaries, "ports": ports}
+            return {
+                "files": sorted(set(files)),
+                "summaries": summaries,
+                "ports": ports,
+                "detail": "full",
+            }
 
         self._register(ToolDef(
             name="hex.context",
             description=(
-                "Load scoped files, cell summaries, and port descriptions "
-                "for the active cell and radius."
+                "Load cell context. Default 'summary' mode returns counts "
+                "and graph. Use detail='full' for files and ports."
             ),
             parameters={
                 "active_cell_id": {"type": "string", "description": "Active cell ID"},
                 "radius": {"type": "integer", "description": "Expansion radius"},
+                "detail": {
+                    "type": "string",
+                    "description": "'summary' (default) or 'full'",
+                    "optional": True,
+                },
             },
             fn=_hex_context,
         ))
@@ -305,51 +348,96 @@ class ToolRegistry:
             fn=_port_check,
         ))
 
-        def _repo_read(active_cell_id: str, radius: int, path: str) -> dict[str, Any]:
+        def _repo_read(
+            active_cell_id: str,
+            radius: int,
+            path: str,
+            offset: int = 0,
+            limit: int | None = None,
+        ) -> dict[str, Any]:
             hexmap = load_hexmap(base)
             policy = load_policy(base)
             authorize_path(base, hexmap, policy, active_cell_id, radius, path)
-            return {"path": path, "content": repo_read(base, path)}
+            result = repo_read(base, path, offset=offset, limit=limit)
+            result["path"] = path
+            return result
 
         self._register(ToolDef(
             name="repo.read",
             description=(
-                "Read a file within the authorized radius. "
-                "Enforces policy sandbox and hex scope."
+                "Read a file with optional chunking. "
+                "Large files auto-truncate; use offset/limit to page."
             ),
             parameters={
                 "active_cell_id": {"type": "string", "description": "Active cell ID"},
                 "radius": {"type": "integer", "description": "Expansion radius"},
                 "path": {"type": "string", "description": "Relative file path to read"},
+                "offset": {
+                    "type": "integer",
+                    "description": "Start line (0-based)",
+                    "optional": True,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max lines to return",
+                    "optional": True,
+                },
             },
             fn=_repo_read,
         ))
 
         def _repo_search(
-            active_cell_id: str, radius: int, query: str, globs: list[str] | None = None,
+            active_cell_id: str,
+            radius: int,
+            query: str,
+            globs: list[str] | None = None,
+            max_results: int = 20,
         ) -> dict[str, Any]:
             hexmap = load_hexmap(base)
             policy = load_policy(base)
+            allowed = calc_allowed_cells(hexmap, active_cell_id, radius)
+
+            # Pre-filter to cell paths
+            cell_paths: list[str] = []
+            for cid in allowed:
+                cell_paths.extend(hexmap.cell(cid).paths)
 
             def is_authorized(rel_path: str) -> bool:
                 try:
-                    authorize_path(base, hexmap, policy, active_cell_id, radius, rel_path)
+                    authorize_path(
+                        base, hexmap, policy,
+                        active_cell_id, radius, rel_path,
+                    )
                     return True
                 except PermissionError:
                     return False
 
-            return {"matches": repo_search(base, query, globs, path_filter=is_authorized)}
+            return repo_search(
+                base, query, globs,
+                path_filter=is_authorized,
+                max_results=max_results,
+                cell_paths=cell_paths,
+            )
 
         self._register(ToolDef(
             name="repo.search",
-            description="Search file contents within authorized scope.",
+            description=(
+                "Search file contents within authorized scope. "
+                "Returns max 20 results with total_count."
+            ),
             parameters={
                 "active_cell_id": {"type": "string", "description": "Active cell ID"},
                 "radius": {"type": "integer", "description": "Expansion radius"},
                 "query": {"type": "string", "description": "Search query string"},
                 "globs": {
                     "type": "array", "items": {"type": "string"},
-                    "description": "Optional glob patterns to filter files", "optional": True,
+                    "description": "Optional glob patterns",
+                    "optional": True,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max results (default 20)",
+                    "optional": True,
                 },
             },
             fn=_repo_search,
