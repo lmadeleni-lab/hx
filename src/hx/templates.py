@@ -106,10 +106,13 @@ def tools_template() -> str:
 
 1. Resolve the active cell.
 2. Ask `hx` for allowed cells at the requested radius.
-3. Read context only inside that scope.
-4. Stage patches before commit.
-5. If approval is required, run `repo.approve_patch`.
-6. Run `port.check`, `proof.collect`, `proof.verify`, and then `repo.commit_patch`.
+3. Load context with `hex.context` (defaults to summary mode — use
+   `detail='full'` only when needed).
+4. Read files with `repo.read` (supports `offset`/`limit` for large files).
+5. Search with `repo.search` (pre-filtered to cell scope, max 20 results).
+6. Stage patches before commit.
+7. If approval is required, run `repo.approve_patch`.
+8. Run `port.check`, `proof.collect`, `proof.verify`, then `repo.commit_patch`.
 
 If commit is denied:
 
@@ -120,18 +123,22 @@ If commit is denied:
 
 ## Core MCP Tools
 
-- `hex.resolve_cell`
-- `hex.allowed_cells`
-- `hex.context`
-- `port.describe`
-- `port.check`
-- `repo.read`
-- `repo.search`
-- `repo.stage_patch`
-- `repo.approve_patch`
-- `proof.collect`
-- `proof.verify`
-- `repo.commit_patch`
+- `hex.resolve_cell` — resolve file path to cell
+- `hex.allowed_cells` — list cells at radius
+- `hex.context` — load context (summary or full mode)
+- `hex.parent_groups` — parent group overview
+- `port.describe` — port contract details
+- `port.check` — boundary impact analysis
+- `repo.read` — read file (with offset/limit)
+- `repo.search` — search within scope (with max_results)
+- `repo.stage_patch` — stage a unified diff
+- `repo.approve_patch` — approve breaking changes
+- `proof.collect` — run proof checks
+- `proof.verify` — verify proof artifacts
+- `repo.commit_patch` — finalize commit
+- `cmd.run` — run allowed shell command
+- `tests.run` — run cell tests
+- `metrics.compute` — compute task metrics
 """
 
 

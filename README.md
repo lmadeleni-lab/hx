@@ -1,7 +1,7 @@
 # hx
 
 `hx` is an open-source local agentic coding harness built around a hexagonal
-cell model, governed cross-cell ports, proof-carrying diffs, and safe-by-default
+cell model with port-based governance, proof-carrying diffs, and safe-by-default
 execution.
 
 ## Why
@@ -10,42 +10,44 @@ Most coding agents can edit broadly and quickly, but they do not natively enforc
 bounded locality, interface governance, or replayable audit trails. `hx` acts as
 the harness between an agent CLI and a repository. It enforces:
 
-- active cell + radius scoped work
-- port contract checks for cross-cell interaction
-- staged patch -> analyze -> proof -> commit workflow
+- active cell + radius scoped work (hexagonal topology)
+- port contract checks for cross-cell interaction with orientation validation
+- staged patch → analyze → proof → commit workflow
 - auditable actions and best-effort replay
-- architectural health metrics such as boundary pressure, port churn, and port entropy
+- architectural health metrics (boundary pressure, port churn, entropy, holonomy)
+- token-optimized agent context with progressive loading
 
 ## Status
 
-The current MVP includes:
+Current version: **0.8.0**
 
-- hex-aware CLI commands for init, validation, logging, replay, and benchmarking
-- a second topology layer with derived parent hex groups for multiscale context
-  compression and operator visibility
-- an MCP stdio server with real end-to-end client validation
-- staged proof-carrying patch workflows with approval gates
-- audit-backed benchmark reporting with paired-run and variance summaries
-- clean-install smoke coverage in CI for package build, install, and CLI startup
+The framework includes:
 
-Current quantitative outputs are governance-oriented and reproducible, but still
-heuristic unless explicitly documented otherwise. Today, `port_entropy` is
-normalized; the remaining reported metrics are still heuristic or
-policy-chosen.
+- **One-command onboarding**: `hx setup` auto-detects language, scaffolds
+  templates, builds hexmap, validates topology, and suggests a policy mode
+- **Agent config scaffolding**: `hx bootstrap` generates `.claude/CLAUDE.md`
+  and memory files derived from live HEXMAP and POLICY
+- **Project health checks**: `hx readiness` runs 8-point diagnostics with
+  actionable recommendations
+- **Task suggestions**: `hx suggest` analyzes the repo and recommends low-risk
+  starter tasks with ready-to-run commands
+- **Governed agent loop**: `hx run '<task>'` orchestrates Claude with full
+  governance, streaming output, and memory-injected system prompts
+- **Token optimization**: chunked file reads, pre-filtered search, progressive
+  context loading, surface caching, and tool result compression
+- **Hex lattice mathematics**: percolation threshold tracking, information-weighted
+  boundary pressure with isoperimetric normalization, holonomy/cocycle
+  cycle-consistency checks, and nonlinear risk scoring with interaction terms
+- **MCP server**: stdio transport with 40+ governance tools for Codex, Gemini,
+  and Claude Code integration
+- **Benchmark framework**: paired-run reporting with variance summaries
 
 ## Install
 
-The current supported host target is macOS terminal sessions. The install path
-currently proven in CI is a clean install from a built package artifact or
-source checkout, not a published PyPI release.
+Prerequisites:
 
-Standard prerequisites on macOS:
-
-- `python3` 3.11 or newer
+- Python 3.11 or newer
 - `git`
-- a terminal session on macOS
-- Xcode Command Line Tools if `git` is not already installed:
-  `xcode-select --install`
 
 From a source checkout:
 
@@ -56,7 +58,7 @@ pip install .
 hx --help
 ```
 
-For contributors working on `hx` itself:
+For contributors:
 
 ```bash
 pip install -e .[dev]
@@ -64,19 +66,25 @@ pip install -e .[dev]
 
 ## Quickstart
 
-Initialize a new repository:
+The fastest path from zero to productive:
 
 ```bash
-mkdir -p /tmp/hx-demo
-cd /tmp/hx-demo
-git init
+hx setup              # scaffolds everything, builds hexmap
+hx bootstrap          # generates agent config (.claude/)
+hx readiness          # confirms project health
+hx suggest            # shows what to work on first
+hx run '<task>'       # run a governed agent task
+```
+
+### Manual initialization (alternative)
+
+```bash
 hx init
 hx hex build
 hx hex validate
-hx mcp serve --transport stdio
 ```
 
-If you are connecting through Codex CLI, the native flow is:
+### Codex integration
 
 ```bash
 hx codex setup
@@ -84,53 +92,55 @@ codex --login
 codex
 ```
 
-`hx codex setup` writes the MCP entry for the current repo into
-`~/.codex/config.toml`. After that, Codex should spawn `hx` automatically. You
-should not keep `hx mcp serve --transport stdio` running manually in a second
-terminal when using Codex.
+`hx codex setup` writes the MCP entry into `~/.codex/config.toml`. Codex
+spawns `hx` automatically through MCP — do not run `hx mcp serve` manually.
 
-Running `hx` with no subcommand in a macOS terminal now shows the startup
-screen and quick commands, similar to an interactive CLI landing view. During
-command execution, `hx` now keeps a branded terminal shell visible with a
-persistent `hx` header, colored phase-aware status updates, and a live
-thinking/loading indicator on `stderr` so users can see what is happening
-without breaking machine-readable output on `stdout`.
+## Commands
 
-Optional interactive controls:
+| Command | Description |
+|---------|-------------|
+| `hx setup` | One-command guided onboarding |
+| `hx bootstrap` | Scaffold agent config files (.claude/) |
+| `hx readiness` | Project health check with recommendations |
+| `hx suggest` | Suggest low-risk starter tasks |
+| `hx run '<task>'` | Run a governed agent task |
+| `hx status` | Governance status dashboard |
+| `hx init` | Initialize hx workspace (templates only) |
+| `hx hex build` | Build HEXMAP from repo structure |
+| `hx hex validate` | Validate HEXMAP topology |
+| `hx hex show <cell>` | Render cell neighborhood |
+| `hx hex watch <cell>` | Live cell monitoring TUI |
+| `hx hex parent show <id>` | Parent group view |
+| `hx log` | Audit summary with risky ports |
+| `hx memory summarize` | Refresh state summaries |
+| `hx resume` | Load compacted restart context |
+| `hx mcp serve` | Start MCP stdio server |
+| `hx doctor` | Environment prerequisite check |
+| `hx benchmark run` | Run benchmark battery |
+| `hx replay <run_id>` | Replay an audit run |
 
-- `hx --ui-mode expanded ...` shows richer task-by-task streaming in the terminal
-- `hx --ui-mode quiet ...` suppresses the interactive layer
-- `hx hex show <cell_id> --radius 1` renders the active cell, six neighbor
-  slots, and per-side fulfillment state
-- `hx hex show <cell_id> --radius 1 --include-parent` adds parent membership
-  context for the selected cell
-- `hx hex watch <cell_id> --radius 1` opens a live mini-TUI that redraws the
-  neighborhood and streams recent audit runs and events into side panels
-- `hx hex parent show <parent_id>` renders the coarse-grained parent hex group
-- `hx hex parent watch <parent_id>` opens a live parent-focused mini-TUI with
-  neighboring parents, risky boundary ports, and summary panels
-- `hx memory summarize` refreshes restart-ready summaries in `.hx/state/`
-- `hx resume` loads the compacted repo restart context
+## Key Concepts
 
-Validate the shipped example benchmark battery from the `hx` source checkout:
+- **Cells**: hexagonal regions of the codebase (6 neighbors each)
+- **Ports**: directed edges between cells with contracts, orientation, and proof requirements
+- **Radius**: BFS scope control — R0 = active cell only, R1 = +neighbors
+- **Proof tiers**: standard → elevated → strict based on change risk
+- **Parent groups**: coarse topology layer for multi-scale governance
+- **Percolation threshold**: port occupation tracked against p_c=1/2
+- **Holonomy**: cycle-consistency checks detect global contract violations
 
-```bash
-hx benchmark validate /absolute/path/to/hx/examples/benchmark_battery.json
-```
+## Documentation
 
-If a commit is denied, the next step is usually one of four things: re-stage the
-patch, collect or verify missing proof, obtain approval for a breaking or
-high-risk change, or justify a radius expansion before trying again.
-
-Parent groups are additive in `0.1.x`: they improve summarization, watch views,
-MCP context, and reporting, but cell/radius authorization still remains the
-only execution boundary.
-
-See [docs/adoption.md](docs/adoption.md) for the golden path, then
-[docs/hex.md](docs/hex.md), [docs/contracts.md](docs/contracts.md),
-[docs/metrics.md](docs/metrics.md), [docs/memory.md](docs/memory.md),
-[docs/benchmarking.md](docs/benchmarking.md),
-[docs/security.md](docs/security.md), [docs/codex.md](docs/codex.md),
-[docs/gemini.md](docs/gemini.md), [docs/release.md](docs/release.md),
-[docs/roadmap.md](docs/roadmap.md), [BENCHMARK.md](BENCHMARK.md),
-[CHANGELOG.md](CHANGELOG.md), and [plan.md](plan.md).
+- [docs/adoption.md](docs/adoption.md) — golden path walkthrough
+- [docs/hex.md](docs/hex.md) — hex model specification
+- [docs/contracts.md](docs/contracts.md) — port contracts and proof tiers
+- [docs/metrics.md](docs/metrics.md) — metric definitions and maturity
+- [docs/memory.md](docs/memory.md) — context compaction
+- [docs/security.md](docs/security.md) — security posture
+- [docs/benchmarking.md](docs/benchmarking.md) — evaluation methodology
+- [docs/codex.md](docs/codex.md) — Codex integration
+- [docs/gemini.md](docs/gemini.md) — Gemini integration
+- [docs/release.md](docs/release.md) — release policy
+- [docs/roadmap.md](docs/roadmap.md) — future direction
+- [CHANGELOG.md](CHANGELOG.md) — version history
+- [plan.md](plan.md) — execution plan
