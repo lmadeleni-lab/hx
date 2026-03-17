@@ -11,6 +11,7 @@ from hx.audit import append_event, finish_run, start_run, update_run
 from hx.config import TASK_DIR, ensure_hx_dirs
 from hx.metrics import compute_metrics, record_port_change
 from hx.models import TaskState
+from hx.patches import PatchFormatError, canonicalize_staged_patch
 
 PATCH_FILE_RE = re.compile(r"^(?:\+\+\+ b/|--- a/)(.+)$", re.MULTILINE)
 
@@ -77,12 +78,22 @@ def stage_patch(
     ensure_hx_dirs(root)
     if run_id is None:
         run_id = start_run(root, "repo.stage_patch").run_id
+    try:
+        canonical_patch = canonicalize_staged_patch(root, patch_unified_diff)
+    except PatchFormatError as exc:
+        append_event(
+            root,
+            run_id,
+            "repo.stage_patch",
+            {"task_id": task_id, "error": str(exc)},
+        )
+        raise RuntimeError(str(exc)) from exc
     patch_path = _task_patch_path(root, task_id)
-    patch_path.write_text(patch_unified_diff)
-    touched = touched_files_from_patch(patch_unified_diff)
+    patch_path.write_text(canonical_patch)
+    touched = touched_files_from_patch(canonical_patch)
     task = TaskState(
         task_id=task_id,
-        patch_sha256=hashlib.sha256(patch_unified_diff.encode()).hexdigest(),
+        patch_sha256=hashlib.sha256(canonical_patch.encode()).hexdigest(),
         patch_path=str(patch_path.relative_to(root)),
         files_touched=touched,
         status="staged",
@@ -231,7 +242,8 @@ def repo_search(
     globs: list[str] | None = None,
     path_filter: Any | None = None,
 ) -> list[dict[str, Any]]:
-    patterns = globs or ["**/*"]
+    # Include top-level files by default.
+    patterns = globs or ["**"]
     results = []
     for pattern in patterns:
         for path in root.glob(pattern):

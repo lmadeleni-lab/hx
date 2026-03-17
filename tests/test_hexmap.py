@@ -4,7 +4,7 @@ from pathlib import Path
 
 from hx.audit import append_event, finish_run, start_run
 from hx.cli import main
-from hx.hexmap import build_hexmap, save_hexmap, validate_hexmap
+from hx.hexmap import build_hexmap, resolve_cell_id, save_hexmap, validate_hexmap
 from hx.models import Cell, HexMap, ParentGroup, Port
 from hx.parents import derive_parent_groups, validate_parent_groups
 from hx.ui import render_hex_view, render_parent_watch_dashboard, render_watch_dashboard
@@ -18,8 +18,23 @@ def test_build_hexmap_creates_cells(tmp_path: Path) -> None:
     assert hexmap.parent_groups
 
 
+def test_resolve_cell_id_starstar_glob_matches_top_level_files() -> None:
+    # Back-compat: older hx versions emitted `**/*` for single-cell repos, which does not
+    # match top-level paths under vanilla fnmatch.
+    hexmap = HexMap(
+        version="1",
+        cells=[Cell(cell_id="root", paths=["**/*"], summary="root")],
+    )
+    assert resolve_cell_id(hexmap, "HEXMAP.json") == "root"
+
+
 def test_validate_hexmap_flags_missing_paths(tmp_path: Path) -> None:
-    hexmap = build_hexmap(tmp_path)
+    # Empty repos should validate (root cell uses a permissive `**` pattern).
+    # We still expect validation to catch obviously wrong patterns.
+    hexmap = HexMap(
+        version="1",
+        cells=[Cell(cell_id="root", paths=["does-not-exist/**"], summary="root")],
+    )
     errors = validate_hexmap(tmp_path, hexmap)
     assert errors
 

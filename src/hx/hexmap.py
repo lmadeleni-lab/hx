@@ -60,7 +60,9 @@ def build_hexmap(root: Path) -> HexMap:
         cells.append(
             Cell(
                 cell_id="root",
-                paths=["**/*"],
+                # IMPORTANT: use a pattern that includes top-level files like HEXMAP.json.
+                # `**/*` does not match top-level paths (no slash) under fnmatch.
+                paths=["**"],
                 summary=(
                     existing_root.summary if existing_root is not None else "Single-cell repository"
                 ),
@@ -107,9 +109,26 @@ def build_hexmap(root: Path) -> HexMap:
     return hexmap
 
 
+def _pattern_matches(rel_path: str, pattern: str) -> bool:
+    # fnmatch follows shell-style globs; it does not give `**/*` the "match everything"
+    # semantics many users expect. We support a tiny compatibility shim because older
+    # hx versions generated `**/*` for single-cell repos.
+    if fnmatch.fnmatch(rel_path, pattern):
+        return True
+    if pattern == "**/*" and "/" not in rel_path:
+        return fnmatch.fnmatch(rel_path, "*")
+    if pattern.endswith("/**"):
+        prefix = pattern[: -len("/**")]
+        return rel_path == prefix or rel_path.startswith(prefix + "/")
+    if pattern.endswith("/**/*"):
+        prefix = pattern[: -len("/**/*")]
+        return rel_path == prefix or rel_path.startswith(prefix + "/")
+    return False
+
+
 def resolve_cell_id(hexmap: HexMap, rel_path: str) -> str | None:
     for cell in hexmap.cells:
-        if any(fnmatch.fnmatch(rel_path, pattern) for pattern in cell.paths):
+        if any(_pattern_matches(rel_path, pattern) for pattern in cell.paths):
             return cell.cell_id
     return None
 
