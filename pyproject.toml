@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hx"
-version = "0.2.0"
+version = "0.3.0"
 description = "Hexagonal cell + port governance harness for local coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
   "mcp>=1.8.0,<2.0.0",
+  "anthropic>=0.50.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,9 @@ dev = [
   "hypothesis>=6.100.0",
   "pytest>=8.0.0",
   "ruff>=0.11.0",
+]
+agent = [
+  "anthropic>=0.50.0",
 ]
 
 [project.scripts]
