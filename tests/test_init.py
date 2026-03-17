@@ -46,6 +46,7 @@ def test_main_accepts_expanded_ui_mode() -> None:
 
 def test_help_includes_startup_screen_for_tty(monkeypatch) -> None:
     monkeypatch.delenv("HX_NO_BANNER", raising=False)
+    monkeypatch.setattr("hx.cli.sys.platform", "darwin")
 
     class TtyBuffer(io.StringIO):
         def isatty(self) -> bool:

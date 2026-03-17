@@ -299,15 +299,26 @@ def compute_metrics(root: Path, task: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+DEFAULT_RISK_WEIGHTS = {"entropy": 0.35, "churn": 0.25, "pressure": 0.25, "failures": 0.15}
+
+
 def policy_risk_score(
     port_entry: dict[str, Any],
     *,
     entropy: float,
     churn: float,
     pressure: float,
+    weights: dict[str, float] | None = None,
 ) -> float:
+    w = weights or DEFAULT_RISK_WEIGHTS
     failures = port_entry.get("failures", 0)
-    return round((entropy * 0.35) + (churn * 0.25) + (pressure * 0.25) + (failures * 0.15), 4)
+    return round(
+        (entropy * w.get("entropy", 0.35))
+        + (churn * w.get("churn", 0.25))
+        + (pressure * w.get("pressure", 0.25))
+        + (failures * w.get("failures", 0.15)),
+        4,
+    )
 
 
 def port_risk_snapshot(port_entry: dict[str, Any]) -> dict[str, Any]:

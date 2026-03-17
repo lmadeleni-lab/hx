@@ -17,4 +17,13 @@ def ensure_hx_dirs(root: Path) -> None:
 
 
 def repo_root(cwd: str | Path | None = None) -> Path:
-    return Path(cwd or ".").resolve()
+    start = Path(cwd or ".").resolve()
+    candidate = start
+    while True:
+        if (candidate / ".hx").is_dir() or (candidate / ".git").is_dir():
+            return candidate
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return start

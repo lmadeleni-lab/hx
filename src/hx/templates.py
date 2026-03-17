@@ -73,6 +73,12 @@ require_human_for_breaking = true
 [modes.release]
 require_human_for_breaking = true
 strict_risk_threshold = 2.5
+
+[risk_weights]
+entropy = 0.35
+churn = 0.25
+pressure = 0.25
+failures = 0.15
 """
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -58,20 +59,97 @@ def _python_exports(path: Path) -> dict[str, Any]:
     return {"exports": sorted(exports), "signatures": signatures}
 
 
+def _typescript_exports(path: Path) -> dict[str, Any]:
+    """Basic TypeScript/JavaScript export extraction via regex."""
+    try:
+        text = path.read_text()
+    except (UnicodeDecodeError, OSError):
+        return {"exports": [], "signatures": {}}
+    exports: list[str] = []
+    signatures: dict[str, str] = {}
+    # export function foo(...) / export async function foo(...)
+    for match in re.finditer(
+        r"export\s+(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)", text
+    ):
+        name, args = match.group(1), match.group(2).strip()
+        exports.append(name)
+        signatures[name] = f"{name}({args})"
+    # export class Foo
+    for match in re.finditer(r"export\s+class\s+(\w+)", text):
+        name = match.group(1)
+        exports.append(name)
+        signatures[name] = f"class {name}"
+    # export const/let/var foo
+    for match in re.finditer(r"export\s+(?:const|let|var)\s+(\w+)", text):
+        name = match.group(1)
+        if name not in exports:
+            exports.append(name)
+            signatures[name] = f"const {name}"
+    # export default
+    for match in re.finditer(r"export\s+default\s+(?:class|function)?\s*(\w+)", text):
+        name = match.group(1)
+        if name not in exports:
+            exports.append(name)
+            signatures[name] = f"default {name}"
+    return {"exports": sorted(set(exports)), "signatures": signatures}
+
+
+def _go_exports(path: Path) -> dict[str, Any]:
+    """Basic Go export extraction - exported names start with uppercase."""
+    try:
+        text = path.read_text()
+    except (UnicodeDecodeError, OSError):
+        return {"exports": [], "signatures": {}}
+    exports: list[str] = []
+    signatures: dict[str, str] = {}
+    func_re = r"^func\s+(?:\([^)]*\)\s+)?([A-Z]\w*)\s*\(([^)]*)\)"
+    for match in re.finditer(func_re, text, re.MULTILINE):
+        name, args = match.group(1), match.group(2).strip()
+        exports.append(name)
+        signatures[name] = f"{name}({args})"
+    for match in re.finditer(r"^type\s+([A-Z]\w*)\s+", text, re.MULTILINE):
+        name = match.group(1)
+        exports.append(name)
+        signatures[name] = f"type {name}"
+    return {"exports": sorted(set(exports)), "signatures": signatures}
+
+
+SURFACE_EXTRACTORS: dict[str, Any] = {
+    ".py": _python_exports,
+    ".ts": _typescript_exports,
+    ".tsx": _typescript_exports,
+    ".js": _typescript_exports,
+    ".jsx": _typescript_exports,
+    ".mjs": _typescript_exports,
+    ".go": _go_exports,
+}
+
+SCHEMA_EXTENSIONS = {".json", ".proto", ".sql", ".graphql", ".avsc"}
+
+
 def extract_cell_surface(root: Path, cell: Cell) -> dict[str, Any]:
     exports: set[str] = set()
     signatures: dict[str, str] = {}
     schemas: list[str] = []
+    unsupported_extensions: set[str] = set()
     for pattern in cell.paths:
-        for path in root.glob(pattern):
+        effective = pattern + "/*" if pattern.endswith("**") else pattern
+        for path in root.glob(effective):
             if path.is_dir():
                 continue
-            if path.suffix == ".py":
-                surface = _python_exports(path)
+            extractor = SURFACE_EXTRACTORS.get(path.suffix)
+            if extractor is not None:
+                surface = extractor(path)
                 exports.update(surface["exports"])
                 signatures.update(surface["signatures"])
-            if path.suffix in {".json", ".proto", ".sql"}:
+            elif path.suffix in SCHEMA_EXTENSIONS:
                 schemas.append(str(path.relative_to(root)))
+            elif path.suffix and path.suffix not in {
+                ".md", ".txt", ".toml", ".yaml", ".yml", ".cfg",
+                ".ini", ".lock", ".gitignore", ".dockerignore",
+                ".csv", ".png", ".jpg", ".gif", ".svg", ".ico",
+            }:
+                unsupported_extensions.add(path.suffix)
     return {
         "cell_id": cell.cell_id,
         "exports": sorted(exports),
@@ -79,6 +157,7 @@ def extract_cell_surface(root: Path, cell: Cell) -> dict[str, Any]:
         "schemas": sorted(schemas),
         "invariants": cell.invariants,
         "tests": cell.tests,
+        "unsupported_extensions": sorted(unsupported_extensions),
     }
 
 
@@ -136,13 +215,17 @@ def _surface_categories(before: dict[str, Any], after: dict[str, Any]) -> list[s
 
 
 def _copy_repo(root: Path, destination: Path) -> None:
-    ignored = shutil.ignore_patterns(".hx", ".git", "__pycache__", ".pytest_cache", ".ruff_cache")
+    ignored = shutil.ignore_patterns(
+        ".hx", ".git", "__pycache__", ".pytest_cache", ".ruff_cache",
+        ".env", ".env.*", "secrets", ".secrets", "node_modules",
+        "*.pem", "*.key",
+    )
     for child in root.iterdir():
-        if child.name in {".hx"}:
+        if child.name in {".hx", ".git"}:
             continue
         target = destination / child.name
         if child.is_dir():
-            shutil.copytree(child, target, ignore=ignored)
+            shutil.copytree(child, target, ignore=ignored, symlinks=False)
         else:
             shutil.copy2(child, target)
 
@@ -151,7 +234,7 @@ def apply_patch_in_temp(root: Path, patch_path: Path) -> Path:
     tempdir = Path(tempfile.mkdtemp(prefix="hx-port-"))
     _copy_repo(root, tempdir)
     result = subprocess.run(
-        ["git", "apply", "--unsafe-paths", str(patch_path)],
+        ["git", "apply", str(patch_path)],
         cwd=tempdir,
         capture_output=True,
         text=True,

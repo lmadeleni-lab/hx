@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,19 @@ def now_iso() -> str:
 
 def audit_path(root: Path, run_id: str) -> Path:
     return root / AUDIT_DIR / f"{run_id}.json"
+
+
+@contextmanager
+def _locked_file(path: Path, mode: str = "r+") -> Generator:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("{}")
+    with open(path, mode) as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield fh
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def start_run(
@@ -41,7 +57,10 @@ def start_run(
 
 def save_run(root: Path, run: AuditRun) -> Path:
     path = audit_path(root, run.run_id)
-    path.write_text(json.dumps(run.to_dict(), indent=2) + "\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(run.to_dict(), indent=2) + "\n")
+    tmp.rename(path)
     return path
 
 
@@ -50,25 +69,40 @@ def load_run(root: Path, run_id: str) -> AuditRun:
 
 
 def append_event(root: Path, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
-    run = load_run(root, run_id)
-    run.events.append(
-        AuditEvent(timestamp=now_iso(), event_type=event_type, payload=payload)
-    )
-    save_run(root, run)
+    path = audit_path(root, run_id)
+    with _locked_file(path, "r+") as fh:
+        data = json.loads(fh.read())
+        run = AuditRun.from_dict(data)
+        run.events.append(
+            AuditEvent(timestamp=now_iso(), event_type=event_type, payload=payload)
+        )
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(run.to_dict(), indent=2) + "\n")
 
 
 def update_run(root: Path, run_id: str, **updates: Any) -> None:
-    run = load_run(root, run_id)
-    for key, value in updates.items():
-        setattr(run, key, value)
-    save_run(root, run)
+    path = audit_path(root, run_id)
+    with _locked_file(path, "r+") as fh:
+        data = json.loads(fh.read())
+        run = AuditRun.from_dict(data)
+        for key, value in updates.items():
+            setattr(run, key, value)
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(run.to_dict(), indent=2) + "\n")
 
 
 def finish_run(root: Path, run_id: str, status: str = "ok") -> None:
-    run = load_run(root, run_id)
-    run.status = status
-    run.finished_at = now_iso()
-    save_run(root, run)
+    path = audit_path(root, run_id)
+    with _locked_file(path, "r+") as fh:
+        data = json.loads(fh.read())
+        run = AuditRun.from_dict(data)
+        run.status = status
+        run.finished_at = now_iso()
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(run.to_dict(), indent=2) + "\n")
 
 
 def list_runs(root: Path) -> list[AuditRun]:

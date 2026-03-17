@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
 
 from hx.config import DEFAULT_POLICY
+
+SHELL_INJECTION_PATTERN = re.compile(r"[;|&`$]|\$\(|&&|\|\|")
 
 
 class PolicyError(RuntimeError):
@@ -20,6 +23,8 @@ def load_policy(root: Path) -> dict[str, Any]:
 
 
 def command_allowed(policy: dict[str, Any], command: str) -> bool:
+    if SHELL_INJECTION_PATTERN.search(command):
+        return False
     prefixes = policy.get("commands", {}).get("allowed_prefixes", [])
     return any(command == prefix or command.startswith(prefix + " ") for prefix in prefixes)
 
@@ -54,3 +59,9 @@ def strict_risk_threshold(policy: dict[str, Any]) -> float | None:
     settings = mode_settings(policy)
     value = settings.get("strict_risk_threshold")
     return None if value is None else float(value)
+
+
+def risk_weights(policy: dict[str, Any]) -> dict[str, float]:
+    defaults = {"entropy": 0.35, "churn": 0.25, "pressure": 0.25, "failures": 0.15}
+    overrides = policy.get("risk_weights", {})
+    return {k: float(overrides.get(k, v)) for k, v in defaults.items()}
