@@ -251,7 +251,9 @@ def repo_read(
 
     Returns a dict with content, metadata, and truncation info.
     """
-    full_path = root / path
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root.resolve()):
+        raise PermissionError(f"Path traversal blocked: {path}")
     raw = full_path.read_bytes()
     total_bytes = len(raw)
     text = raw.decode(errors="replace")

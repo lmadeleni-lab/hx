@@ -10,6 +10,18 @@ from hx.config import DEFAULT_POLICY
 
 SHELL_INJECTION_PATTERN = re.compile(r"[;|&`$]|\$\(|&&|\|\|")
 
+# Dangerous argument patterns: commands that invoke subshells or eval
+# Note: -c is intentionally NOT blocked here because it's used
+# legitimately (e.g., python3 -c 'print(1)' in benchmarks).
+# The prefix allowlist + shell injection regex provide the primary
+# defense. This pattern catches explicit subprocess spawning.
+DANGEROUS_ARG_PATTERNS = re.compile(
+    r"\s--exec\b"       # git --exec, find -exec
+    r"|\beval\s"        # eval commands
+    r"|\bsh\s+-c\b"     # sh -c (explicit shell invocation)
+    r"|\bbash\s+-c\b"   # bash -c
+)
+
 
 class PolicyError(RuntimeError):
     pass
@@ -24,6 +36,8 @@ def load_policy(root: Path) -> dict[str, Any]:
 
 def command_allowed(policy: dict[str, Any], command: str) -> bool:
     if SHELL_INJECTION_PATTERN.search(command):
+        return False
+    if DANGEROUS_ARG_PATTERNS.search(f" {command} "):
         return False
     prefixes = policy.get("commands", {}).get("allowed_prefixes", [])
     return any(command == prefix or command.startswith(prefix + " ") for prefix in prefixes)
