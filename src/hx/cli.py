@@ -552,6 +552,66 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_readiness(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.readiness import check_readiness, render_readiness
+
+    with ui.activity(
+        "Checking project readiness",
+        success_message="Readiness check complete",
+    ):
+        report = check_readiness(root)
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(render_readiness(report, color=ui.color))
+    return 0 if report["ready"] else 1
+
+
+def cmd_suggest(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+
+    from hx.suggest import suggest_tasks
+
+    with ui.activity(
+        "Analyzing repo for task suggestions",
+        success_message="Task suggestions ready",
+    ):
+        suggestions = suggest_tasks(root)
+
+    if not suggestions:
+        print("No suggestions — your project looks good!")
+        return 0
+
+    limit = args.n
+    if args.json:
+        print(json.dumps(suggestions[:limit], indent=2))
+    else:
+        for i, s in enumerate(suggestions[:limit], 1):
+            risk_label = s["risk"]
+            if ui.color:
+                from hx.ui import paint
+                risk_colors = {
+                    "none": "green", "low": "green",
+                    "medium": "yellow", "high": "red",
+                }
+                risk_label = paint(
+                    risk_label, risk_colors.get(s["risk"], "dim"),
+                    color=True,
+                )
+            cell_str = f" (cell: {s['cell']})" if s["cell"] else ""
+            print(f"{i}. [{risk_label}] {s['task']}{cell_str}")
+            print(f"   {s['reason']}")
+            print(f"   $ {s['command']}")
+            print()
+
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -752,6 +812,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bootstrap_parser.add_argument("--force", action="store_true")
     bootstrap_parser.set_defaults(func=cmd_bootstrap)
+
+    readiness_parser = subparsers.add_parser(
+        "readiness", help="Check project readiness",
+    )
+    readiness_parser.add_argument("--json", action="store_true")
+    readiness_parser.set_defaults(func=cmd_readiness)
+
+    suggest_parser = subparsers.add_parser(
+        "suggest", help="Suggest low-risk starter tasks",
+    )
+    suggest_parser.add_argument("-n", type=int, default=5)
+    suggest_parser.add_argument("--json", action="store_true")
+    suggest_parser.set_defaults(func=cmd_suggest)
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")
