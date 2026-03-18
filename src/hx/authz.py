@@ -35,8 +35,13 @@ def authorize_path(
     radius: int,
     path: str,
 ) -> str:
-    _ = root
     rel = str(Path(path))
+    # Block path traversal
+    resolved = (root / rel).resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise AuthorizationError(
+            f"Path traversal blocked: '{rel}' escapes repo root."
+        )
     if not path_allowed(policy, rel):
         sandbox = policy.get("path_sandbox", {})
         denylist = sandbox.get("denylist", [])

@@ -47,7 +47,10 @@ def create_server_with_options(
 
     @mcp.resource("repo://file/{path}")
     def resource_repo_file(path: str) -> str:
-        return (base / path).read_text()
+        resolved = (base / path).resolve()
+        if not resolved.is_relative_to(base.resolve()):
+            raise PermissionError(f"Path traversal blocked: {path}")
+        return resolved.read_text()
 
     @mcp.resource("hx://hexmap")
     def resource_hexmap() -> str:
