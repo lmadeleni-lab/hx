@@ -1,149 +1,173 @@
 # Adoption Walkthrough
 
-This walkthrough shows the intended "golden path" for a repository adopting
-`hx`.
+Get from zero to governed AI coding in under 5 minutes.
 
-Install note:
+## Prerequisites
 
-- the currently supported install contract is a clean package install from a
-  source checkout or built wheel
-- the current supported host target is macOS terminal sessions
-- editable installs are a contributor convenience, not the only supported path
-- standard prerequisites are `python3`, `git`, and a macOS terminal shell
-- interactive terminal use now includes colored status lines and a live
-  thinking/loading indicator on `stderr`
-- `--ui-mode expanded` enables richer streaming of task-level progress
+- Python 3.11 or newer
+- `git`
+- A terminal (macOS, Linux, or WSL)
 
-## 1. Initialize the Repo
-
-The fastest path:
+## 1. Install
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .
+```
+
+## 2. Initialize Your Repo
+
+```bash
+cd your-project
 hx setup
 hx bootstrap
 ```
 
-`hx setup` auto-detects your language, scaffolds all templates, builds the
-hexmap, validates topology, and suggests a policy mode. `hx bootstrap`
-generates `.claude/CLAUDE.md` and memory files so agents immediately
-understand your governance model.
+`hx setup` does everything in one command:
+- Detects your primary language (Python, TypeScript, Go, etc.)
+- Creates `HEXMAP.json` — maps your repo into hexagonal cells
+- Creates `POLICY.toml` — governance rules, sandbox, command allowlist
+- Creates `AGENTS.md` and `TOOLS.md` — agent behavior guidance
+- Validates the topology and suggests a policy mode (dev/ci/release)
 
-To check project health:
+`hx bootstrap` generates agent-specific configs:
+- `.claude/settings.json` — MCP server auto-discovery for Claude Code
+- `.claude/CLAUDE.md` — project governance instructions
+- `.claude/memory/` — persistent context files
+- `GEMINI.md` — Gemini-specific instructions
+
+## 3. Check Project Health
 
 ```bash
 hx readiness
+```
+
+This runs 8 checks: scaffold files, hexmap quality, policy fitness,
+git status, test coverage by cell, audit history, risk profile, and
+agent config. Each check passes or fails with a specific recommendation.
+
+```bash
 hx suggest
 ```
 
-### Manual initialization (alternative)
+Suggests low-risk starter tasks based on your repo's actual state —
+missing tests, undocumented cells, lint issues, risky ports. Each
+suggestion includes a ready-to-run `hx run` command.
 
-```bash
-hx init
-hx hex build
-hx hex validate
-```
+## 4. Connect Your Agent
 
-This creates starter policy, hex map, agent guidance, and benchmark templates.
+### Claude Code (automatic)
+Just open the repo — Claude Code discovers `.claude/settings.json`.
 
-## 2. Refine the Hex Map
-
-Review `HEXMAP.json` and make sure:
-
-- each cell has a meaningful summary
-- paths map to real architectural regions
-- tests are listed for each cell
-- neighbors and ports reflect real cross-cell boundaries
-
-## 3. Run the MCP Server
-
-```bash
-hx mcp serve --transport stdio
-```
-
-If you are using Codex CLI, prefer the native guided setup instead:
-
+### Codex CLI
 ```bash
 hx codex setup
 codex --login
 codex
 ```
 
-In the Codex flow, do not manually keep `hx mcp serve --transport stdio`
-running. Codex should launch `hx` for you through MCP.
+### Gemini CLI
+```bash
+hx gemini setup
+gemini
+```
 
-To inspect the local topology before starting work:
+### Any MCP client
+```bash
+hx mcp serve --transport stdio
+```
+
+## 5. Plan Your Work
+
+For simple tasks, run directly:
+```bash
+hx run 'Fix the null check in src/auth.py line 42' --cell src
+```
+
+For complex work, plan first:
+```bash
+hx plan create 'Migrate to OAuth2' \
+  --step 'Add client library' --step-cell src \
+  --step 'Update login endpoint' --step-cell src \
+  --step 'Add integration tests' --step-cell tests --step-after '0,1'
+hx plan show
+```
+
+Need prompt ideas? Run `hx samples` for copy-paste examples.
+
+## 6. Check the Reasoning Gate
+
+Before running expensive LLM tasks:
+```bash
+hx gate --cell src --radius 1
+```
+
+This tells you whether the system can handle the task locally
+(deterministic rules, no LLM cost) or needs LLM consultation.
+Modes: `LOCAL`, `LLM_SCOPED`, `LLM_FULL`, `ESCALATE`.
+
+## 7. Run a Governed Task
 
 ```bash
-hx hex show root --radius 1
+export ANTHROPIC_API_KEY='sk-ant-...'
+hx run 'Add input validation to the login endpoint' --cell src
 ```
 
-For a live operator view while work is happening:
+The agent loop will:
+1. Evaluate the reasoning gate (skip LLM if local reasoning suffices)
+2. Build a scoped or full system prompt with memory context
+3. Stream Claude's response with tool calls
+4. Execute tools through the governance layer
+5. Check holonomy for feedback integrity after port-affecting calls
+6. Record everything in the audit trail
+
+## 8. The Governance Flow
+
+When the agent makes changes, the flow is:
+
+```
+repo.stage_patch → port.check → proof.collect → proof.verify → repo.commit_patch
+```
+
+- **Breaking changes** trigger elevated proof tiers and human approval
+- **High-risk ports** get flagged with risk scores
+- **Commit is blocked** if proofs are unsatisfied or approval is missing
+- Every denial message tells you **what went wrong and how to fix it**
+
+## 9. Monitor and Audit
 
 ```bash
-hx --ui-mode expanded hex watch root --radius 1
+hx status           # governance dashboard
+hx log              # audit summary + risky ports
+hx percolation      # hex lattice phase health
+hx memory summarize # refresh state for next session
+hx resume           # load restart context
 ```
 
-Then connect your agent CLI through MCP and prefer this order:
+## 10. Interpret Results Correctly
 
-1. resolve the active cell
-2. fetch allowed cells at the current radius
-3. load scoped context
-4. stage patches
-5. run port and proof checks
-6. commit only after verification
+| Category | Status | Meaning |
+|----------|--------|---------|
+| **Deterministic** | Exact | Cell resolution, authorization, proofs, audit |
+| **Heuristic** | Policy-tunable | Risk scores, boundary pressure, proof tiers |
+| **LLM output** | Best-effort | Code changes, summaries, reasoning |
 
-## 4. Perform a Scoped Change
+Proof, risk, and benchmark outputs are governance-grade.
+Metric weights are heuristic and documented as such.
+The LLM generates code — the system enforces quality.
 
-Typical flow:
+## What If Something Goes Wrong?
 
-```text
-repo.stage_patch -> port.check -> proof.collect -> proof.verify -> repo.commit_patch
-```
+| Problem | Solution |
+|---------|----------|
+| "Path denied by policy sandbox" | Check `POLICY.toml` denylist — the error shows which rule matched |
+| "Outside allowed radius" | Use `--radius 2` or `--cell <target>` — the error lists allowed cells |
+| "Proof obligations not satisfied" | Run `proof.collect` then `proof.verify` — check test output |
+| "Human approval required" | The agent will prompt you — type `y` to approve breaking changes |
+| "Could not resolve active cell" | Use `--cell <id>` — run `hx hex show <id>` to find the right cell |
+| "ANTHROPIC_API_KEY not set" | Get a key at console.anthropic.com, then `export ANTHROPIC_API_KEY=...` |
+| Hexmap disconnected warning | Normal for auto-built maps — add neighbor links in `HEXMAP.json` |
 
-For breaking or high-risk changes, expect:
-
-- stricter proof obligations
-- governance artifacts under `.hx/artifacts/<task_id>/`
-- possible human approval before commit
-
-If commit is denied, treat the denial reason as the next-action guide:
-
-- re-stage if the patch changed after analysis
-- complete missing proof collection or verification if obligations are unsatisfied
-- obtain approval if the change is breaking or high-risk in the current mode
-- expand radius only with explicit justification when the change is genuinely
-  outside the active scope
-
-## 5. Inspect Audit and Metrics
-
-Use:
-
-```bash
-hx log
-hx memory summarize
-hx resume
-```
-
-This gives a run summary plus the top risky ports by current policy-oriented
-risk scoring, and produces compacted restart context under `.hx/state/`.
-
-## 6. Run a Benchmark
-
-```bash
-hx benchmark run battery.json
-hx benchmark report
-```
-
-If you include audit run ids in the task battery, benchmark reports can also
-summarize locality and proof-coverage variance from real `hx` runs.
-
-## 7. Interpret Results Correctly
-
-- proof, risk, and benchmark outputs are useful now
-- some metrics are normalized, but most are still heuristic
-- replay is best-effort and permission-preserving, not a guarantee that every
-  historical command can be re-executed in every future environment
-- benchmark output is descriptive unless future calibration work says otherwise
-
-See `docs/metrics.md`, `docs/contracts.md`, and `docs/benchmarking.md` for the
-governance details behind these outputs.
+See also: [metrics.md](metrics.md), [contracts.md](contracts.md),
+[security.md](security.md), [benchmarking.md](benchmarking.md).
