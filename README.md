@@ -5,90 +5,135 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.11.0-orange)](CHANGELOG.md)
 
-A **stateful reasoning engine** for agentic code development. The LLM is
-a consultant — `hx` owns state, simulation, and decisions.
+**Stop letting AI agents write code without guardrails.**
+
+`hx` is a stateful reasoning engine that makes AI coding agents safe,
+auditable, and architecturally aware. It wraps your repo in a hexagonal
+cell graph where every change is scoped, every boundary is governed,
+and every action is tracked.
+
+The LLM is a **consultant**. `hx` is the **system** — it owns the state,
+runs the simulation, scores the risk, and decides when to call the LLM
+versus when deterministic rules are enough.
+
+## The Problem
+
+AI coding agents are powerful but dangerous:
+
+- They edit files **anywhere** with no scope control
+- They make changes that **break interfaces** between modules
+- They have **no memory** of what they did or why
+- They **burn tokens** reading entire files when they need 10 lines
+- There is **no audit trail** when something goes wrong
+- You cannot **plan multi-step work** — each task is isolated
+
+## How hx Solves This
 
 ```
 state -> reasoning gate -> simulation -> decision -> execution -> feedback -> state
          (local/LLM?)     (deterministic)  (scored)   (governed)   (audited)
 ```
 
-## Quickstart (2 minutes)
+| Problem | hx Solution |
+|---------|-------------|
+| Agents edit anywhere | **Cell + radius** scoping — agents can only touch files in their assigned hexagonal cell |
+| Breaking interfaces | **Port contracts** — cross-cell changes are detected, classified, and require proof |
+| No memory | **Stateful engine** — audit trail, state transitions, memory injection into prompts |
+| Wasted tokens | **Progressive loading** — summary first, detail on demand; chunked reads; compressed results |
+| No audit trail | **Append-only audit log** with file locking, replayable runs, governance artifacts |
+| No planning | **Task planner** — multi-step plans with cell targeting and dependency tracking |
+| LLM always called | **Reasoning gate** — decides LOCAL (free) vs LLM_SCOPED (cheap) vs LLM_FULL (expensive) |
+
+## Benefits
+
+**For teams using AI coding agents:**
+- Every AI change is scoped to a cell and radius — no surprise edits across the codebase
+- Breaking changes require human approval — the AI cannot bypass this
+- Full audit trail — know exactly what happened, when, and why
+- Risk scoring catches problems before they reach production
+
+**For architects:**
+- Hexagonal topology maps naturally to module boundaries
+- Multi-scale reasoning via parent groups — zoom out without losing detail
+- Boundary pressure metrics tell you where your architecture is stressed
+- Holonomy checks catch global inconsistencies that local reviews miss
+
+**For cost-conscious teams:**
+- Reasoning gate skips the LLM when deterministic rules suffice
+- Token optimization reduces context by 40-50% when the LLM is needed
+- Surface caching avoids re-parsing files on every tool call
+- Progressive context loading: summary mode uses ~100 tokens vs ~800 for full
+
+**For security teams:**
+- Path traversal protection on every file read
+- Shell injection blocking with argument pattern validation
+- LLM cannot self-approve, cannot override proof obligations
+- Deny-by-default policy sandbox
+
+## Quickstart
 
 ```bash
-# Install
+# 1. Install (30 seconds)
 python3 -m venv .venv && source .venv/bin/activate
 pip install .
 
-# Initialize your repo
+# 2. Initialize your repo (30 seconds)
 cd your-project
-hx setup                    # detects language, builds hexmap, scaffolds everything
-hx bootstrap                # generates .claude/ config + GEMINI.md
+hx setup            # auto-detects language, builds hexmap, scaffolds policy
+hx bootstrap        # generates agent configs (.claude/, GEMINI.md)
 
-# Explore
-hx readiness                # health check — see what's ready, what needs work
-hx suggest                  # get task recommendations
-hx samples                  # see example prompts
+# 3. Check what's ready (10 seconds)
+hx readiness        # 8-point health check
+hx suggest          # repo-specific task recommendations
 
-# Plan multi-step work
-hx plan create 'Add OAuth2' \
-  --step 'Add client library' --step-cell src \
-  --step 'Update endpoints'   --step-cell src \
-  --step 'Add integration tests' --step-cell tests --step-after '0,1'
-hx plan show
+# 4. See example prompts
+hx samples          # copy-paste examples for common tasks
 
-# Check reasoning mode before running
-hx gate --cell src          # LOCAL? LLM_SCOPED? LLM_FULL?
+# 5. Plan multi-step work (optional)
+hx plan create 'Add user authentication' \
+  --step 'Add auth middleware' --step-cell src \
+  --step 'Add login endpoint' --step-cell src \
+  --step 'Add auth tests' --step-cell tests --step-after '0,1'
+hx plan show        # view progress
 
-# Run a governed task
+# 6. Check reasoning mode
+hx gate --cell src  # LOCAL? LLM_SCOPED? LLM_FULL? ESCALATE?
+
+# 7. Run a governed task
 export ANTHROPIC_API_KEY='sk-ant-...'
-hx run 'Add input validation to the login endpoint' --cell src
+hx run 'Add input validation to the login endpoint. \
+  Check for empty email, SQL injection, and add tests.' --cell src
 
-# Monitor
-hx status                   # governance dashboard
-hx percolation              # percolation phase monitor
-hx log                      # audit trail
+# 8. Monitor
+hx status           # governance dashboard
+hx log              # audit trail with risky ports
+hx percolation      # hex lattice phase monitor
 ```
 
-## Why Hexagons
+**Everything except step 7 works without an API key.**
 
-| Property | Mathematical Guarantee | What It Means |
-|----------|----------------------|---------------|
-| **Degree-6 bound** | Scope = 3R^2+3R+1 cells | Know token budget before LLM call |
-| **Isoperimetric optimum** | Smallest boundary/area ratio | Minimal state leakage across cells |
-| **Percolation p_c=1/2** | Exact phase transition | Sharp local-vs-global reasoning boundary |
-| **Holonomy** | Cocycle consistency on triangles | Detect feedback loop inconsistencies |
-| **Renormalization** | Multi-scale coarsening | Parent-level reasoning without cell detail |
+## Why Hexagons (Not Just Any Graph)
 
-## What's Deterministic vs Heuristic vs Provider-Specific
+The degree-6 hex lattice provides mathematical guarantees that matter:
 
-### Fully Deterministic (no LLM, no tuning)
-- Cell resolution, BFS radius expansion, authorization checks
-- Path sandbox enforcement, command allowlist validation
-- Patch staging, SHA256 integrity, file-touched tracking
-- Surface extraction (Python/TypeScript/Go AST/regex)
-- Port impact classification (breaking/compatible)
-- Audit trail (append-only, locked writes)
-- Graph invariants (V, E, components, Euler characteristic)
-- Occupation fraction, isoperimetric bound
-- Holonomy/cocycle checks, dual port validation
-- State transitions (incremental, with drift detection)
+| Property | What It Means In Practice |
+|----------|--------------------------|
+| **Degree-6 bound** | At radius R, scope is exactly 3R^2+3R+1 cells. You know your token budget before calling the LLM. R1=7 cells, R2=19 cells. |
+| **Best isoperimetric ratio** | Among all regular tilings, hexagons have the smallest boundary for a given area. Your governance boundaries leak the least. |
+| **Percolation at p_c=1/2** | When more than half your ports are active, changes can propagate unboundedly. `hx percolation` warns you before this happens. |
+| **Holonomy on triangles** | Cycle-consistency checks detect when a sequence of individually-valid changes creates a globally-invalid state. |
+| **Renormalization** | Parent groups (7 cells each) create a coarser view. Reason at the parent level, drill down only when needed. |
 
-### Heuristic (deterministic formula, policy-tunable weights)
-- `policy_risk_score` — normalized [0,1], entropy/churn/pressure/failures + interaction
-- `architecture_potential` — weighted sum with entropy x churn cross-term
-- `boundary_pressure` — information-weighted graph cut, isoperimetrically normalized
-- Proof tiers (standard/elevated/strict) — based on breaking + risk threshold
-- Reasoning gate thresholds — PRESSURE_LOCAL_MAX, RISK_ESCALATE_MIN
-- Parent cohesion, connectivity strength
+## What's Deterministic vs Heuristic vs LLM
 
-### Provider-Specific (requires LLM API)
-- `hx run` agent loop — calls Anthropic Claude API
-- System prompt construction (scoped or full)
-- Tool call orchestration and streaming
-- Approval prompt (interactive terminal)
+| Category | What | Requires LLM? |
+|----------|------|---------------|
+| **Deterministic** | Cell resolution, authorization, path sandbox, patch staging, SHA256 integrity, surface extraction (Python/TS/Go), port impact classification, audit trail, graph invariants, holonomy checks, state transitions | No |
+| **Heuristic** | Risk scoring (normalized [0,1] with interaction terms), architecture potential, boundary pressure (isoperimetrically normalized), proof tier escalation, reasoning gate thresholds, parent cohesion | No |
+| **LLM-assisted** | `hx run` agent loop, system prompt construction, tool call orchestration, streaming output | Yes (Anthropic API) |
 
-**Everything except the agent loop works without any API key.**
+**The governance system, simulation, and decision logic are fully deterministic.
+The LLM is only used for generating code changes — never for enforcement.**
 
 ## Commands
 
@@ -136,10 +181,15 @@ hx log                      # audit trail
 
 | Agent | Setup | What Gets Generated |
 |-------|-------|-------------------|
-| **Claude Code** | `hx bootstrap` | `.claude/settings.json` + `CLAUDE.md` + memory files |
+| **Claude Code** | `hx bootstrap` | `.claude/settings.json` + `CLAUDE.md` + memory |
 | **Codex** | `hx codex setup` | `~/.codex/config.toml` MCP entry |
 | **Gemini** | `hx gemini setup` | `~/.gemini/settings.json` MCP entry |
 | **Any MCP** | `hx mcp serve --transport stdio` | Direct connection |
+
+```bash
+# Zero-to-agent in 3 commands:
+hx setup && hx bootstrap && hx codex setup  # or hx gemini setup
+```
 
 ## MCP Tools (40+)
 
@@ -154,13 +204,13 @@ hx log                      # audit trail
 
 ## Security
 
-- Path traversal protection on all file reads (resolve + prefix check)
-- Shell injection regex + dangerous argument pattern blocking (`-c`, `--exec`, `-e`)
-- Proof obligations enforced by `port.check`, not overridable by LLM
-- Approval requires `human:` prefix — LLM cannot self-approve
+- Path traversal protection on all file reads (resolve + is_relative_to check)
+- Shell injection regex + dangerous argument blocking (`sh -c`, `bash -c`, `--exec`)
+- Proof obligations set by `port.check` — **LLM cannot override**
+- Approval requires `human:` prefix — **LLM cannot self-approve**
 - Deny-by-default policy sandbox (allowlist + denylist)
-- Audit trail with file locking (fcntl.flock)
-- Port direction validation (enum: export/import/bidirectional/none)
+- Audit trail with advisory file locking
+- Port direction enforced as enum (export/import/bidirectional/none)
 
 ## Documentation
 
