@@ -221,7 +221,36 @@ def check_readiness(root: Path) -> dict[str, Any]:
         pass
     checks.append(risk_check)
 
-    # 8. Agent config
+    # 8. Provider configuration
+    provider_check: dict[str, Any] = {
+        "name": "provider",
+        "ok": False,
+        "detail": {},
+    }
+    from hx.wizard import load_provider_config, provider_status
+    prov_status = provider_status(root)
+    provider_check["detail"]["active_provider"] = prov_status["active_provider"]
+    provider_check["detail"]["config_exists"] = prov_status["config_exists"]
+    any_key_set = any(p["key_set"] for p in prov_status["providers"])
+    provider_check["detail"]["any_key_set"] = any_key_set
+    provider_check["ok"] = prov_status["config_exists"] and any_key_set
+    if not prov_status["config_exists"]:
+        recommendations.append(
+            "Run `hx provider setup` to configure an LLM provider."
+        )
+    elif not any_key_set:
+        active = prov_status["active_provider"]
+        if active:
+            env_key = next(
+                p["env_key"] for p in prov_status["providers"]
+                if p["provider"] == active
+            )
+            recommendations.append(
+                f"Set {env_key} in your environment to activate the provider."
+            )
+    checks.append(provider_check)
+
+    # 9. Agent config
     agent_check: dict[str, Any] = {
         "name": "agent_config",
         "ok": False,
@@ -299,6 +328,12 @@ def render_readiness(report: dict[str, Any], *, color: bool = False) -> str:
                 lines.append(
                     f"    cell coverage: {detail['cell_coverage']}"
                 )
+        elif check["name"] == "provider":
+            active = detail.get("active_provider")
+            if active:
+                lines.append(f"    active: {active}")
+            else:
+                lines.append("    no provider configured")
         elif check["name"] == "audit":
             total = detail.get("total_runs", 0)
             failed = detail.get("failed_runs", 0)

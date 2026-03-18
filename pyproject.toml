@@ -54,6 +54,10 @@ dev = [
 agent = [
   "anthropic>=0.50.0",
 ]
+providers = [
+  "anthropic>=0.50.0",
+  "openai>=1.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/lmadeleni-lab/hx"
