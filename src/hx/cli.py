@@ -827,13 +827,24 @@ def cmd_suggest(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    provider = args.provider
+    from hx.providers import resolve_api_key, resolve_provider
+    try:
+        config = resolve_provider(provider)
+    except ValueError as exc:
+        ui.note(str(exc), level="error")
+        return 1
+
+    api_key = resolve_api_key(provider)
     if not api_key:
+        env_key = config["env_key"]
+        name = config["name"]
         ui.note(
-            "ANTHROPIC_API_KEY not set. To use hx run:\n"
-            "  1. Get an API key at https://console.anthropic.com/\n"
-            "  2. export ANTHROPIC_API_KEY='sk-ant-...'\n"
-            "  3. Re-run your command",
+            f"{env_key} not set. To use hx run with {name}:\n"
+            f"  1. Get an API key from your provider\n"
+            f"  2. export {env_key}='your-key-here'\n"
+            f"  3. Re-run your command",
             level="error",
         )
         return 1
@@ -871,6 +882,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         active_cell_id=active_cell_id,
         radius=args.radius,
         model=args.model,
+        provider=provider,
         max_turns=args.max_turns,
         color=ui.color,
         api_key=api_key,
@@ -1015,10 +1027,19 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run a governed agent task")
     run_parser.add_argument("task", help="Task description in natural language")
     run_parser.add_argument(
-        "--cell", default=None, help="Override active cell (auto-resolved from CWD)",
+        "--cell", default=None,
+        help="Override active cell (auto-resolved from CWD)",
     )
     run_parser.add_argument("--radius", type=int, default=1)
-    run_parser.add_argument("--model", default="claude-sonnet-4-20250514")
+    run_parser.add_argument(
+        "--provider", default="anthropic",
+        choices=["anthropic", "openai", "deepseek", "gemini"],
+        help="LLM provider (default: anthropic)",
+    )
+    run_parser.add_argument(
+        "--model", default=None,
+        help="Model override (default: provider's default model)",
+    )
     run_parser.add_argument("--max-turns", type=int, default=50)
     run_parser.set_defaults(func=cmd_run)
 

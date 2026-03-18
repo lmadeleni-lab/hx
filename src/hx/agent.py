@@ -143,19 +143,35 @@ def run_agent(
     *,
     active_cell_id: str,
     radius: int,
-    model: str = "claude-sonnet-4-20250514",
+    model: str | None = None,
+    provider: str = "anthropic",
     max_turns: int = 50,
     color: bool = False,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Run the governed agent loop. Returns a summary dict."""
+    """Run the governed agent loop. Returns a summary dict.
+
+    Supports multiple providers: anthropic, openai, deepseek, gemini.
+    The governance layer is provider-independent.
+    """
+    from hx.providers import call_llm, resolve_api_key, resolve_provider
+
     try:
-        import anthropic
-    except ImportError:
+        config = resolve_provider(provider)
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+
+    effective_key = api_key or resolve_api_key(provider)
+    if not effective_key:
         return {
             "status": "error",
-            "error": "anthropic package not installed. Run: pip install anthropic",
+            "error": (
+                f"{config['env_key']} not set. "
+                f"Set it to use {config['name']}."
+            ),
         }
+
+    effective_model = model or config["default_model"]
 
     ensure_hx_dirs(root)
     registry = ToolRegistry(root)
@@ -171,7 +187,6 @@ def run_agent(
         allowed=calc_allowed_cells(load_hexmap(root), active_cell_id, radius),
     )
 
-    client = anthropic.Anthropic(api_key=api_key)
     tools = registry.anthropic_tool_schemas()
 
     # Reasoning gate: decide LLM consultation strategy
@@ -212,171 +227,121 @@ def run_agent(
 
     try:
         for _turn in range(max_turns):
-            # Call Claude with streaming
-            with client.messages.stream(
-                model=model,
-                max_tokens=8192,
-                system=system_prompt,
-                messages=messages,
-                tools=tools,
-            ) as stream:
-                assistant_content: list[dict[str, Any]] = []
-                current_text = ""
-                tool_use_blocks: list[dict[str, Any]] = []
+            # Call LLM via unified provider interface
+            response = call_llm(
+                provider, effective_key, effective_model,
+                system_prompt, messages, tools,
+                renderer=renderer,
+            )
 
-                for event in stream:
-                    if event.type == "content_block_start":
-                        if event.content_block.type == "text":
-                            current_text = ""
-                        elif event.content_block.type == "tool_use":
-                            tool_use_blocks.append({
-                                "id": event.content_block.id,
-                                "name": event.content_block.name,
-                                "input": {},
-                            })
-                    elif event.type == "content_block_delta":
-                        if event.delta.type == "text_delta":
-                            renderer.text_delta(event.delta.text)
-                            current_text += event.delta.text
-                        elif event.delta.type == "input_json_delta":
-                            pass  # accumulated in final message
-                    elif event.type == "content_block_stop":
-                        if current_text:
-                            assistant_content.append({
-                                "type": "text",
-                                "text": current_text,
-                            })
-                            current_text = ""
+            assistant_content = response.raw.get("assistant_content", [])
+            messages.append({"role": "assistant", "content": assistant_content})
 
-                renderer.text_done()
+            # If no tool calls, the model is done
+            tool_use_blocks = response.tool_calls
+            if not tool_use_blocks:
+                break
 
-                # Get the final message to extract complete tool_use blocks
-                final_message = stream.get_final_message()
-                tool_use_blocks = [
-                    block for block in final_message.content
-                    if block.type == "tool_use"
-                ]
+            # Process tool calls
+            tool_results: list[dict[str, Any]] = []
+            for block in tool_use_blocks:
+                tool_call_count += 1
+                api_name = block["name"]
+                arguments = block["input"]
+                block_id = block["id"]
 
-                # Build assistant content from final message
-                assistant_content = []
-                for block in final_message.content:
-                    if block.type == "text":
-                        assistant_content.append({"type": "text", "text": block.text})
-                    elif block.type == "tool_use":
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
-
-                messages.append({"role": "assistant", "content": assistant_content})
-
-                # If no tool use, the model is done
-                if not tool_use_blocks:
-                    break
-
-                # Process tool calls
-                tool_results: list[dict[str, Any]] = []
-                for block in tool_use_blocks:
-                    tool_call_count += 1
-                    api_name = block.name
-                    arguments = block.input
-
-                    try:
-                        real_name = registry.resolve_api_name(api_name)
-                    except KeyError:
-                        renderer.tool_result(api_name, {}, error=f"Unknown tool: {api_name}")
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps({"error": f"Unknown tool: {api_name}"}),
-                            "is_error": True,
-                        })
-                        continue
-
-                    renderer.tool_start(real_name, arguments)
-
-                    # Intercept port.check for approval flow
-                    try:
-                        result = registry.call(real_name, arguments)
-                    except Exception as exc:
-                        error_msg = str(exc)
-                        renderer.tool_result(real_name, {}, error=error_msg)
-                        append_event(root, audit_run.run_id, "tool.error", {
-                            "tool": real_name, "error": error_msg,
-                        })
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps({"error": error_msg}),
-                            "is_error": True,
-                        })
-                        continue
-
-                    # Handle approval flow
-                    if real_name == "port.check" and result.get("requires_approval"):
-                        reasons = result.get("approval_reasons", ["Breaking change detected"])
-                        approved = renderer.approval_prompt(reasons)
-                        if approved:
-                            # Find task_id from arguments and auto-approve
-                            task_id = arguments.get("task_id", "")
-                            try:
-                                registry.call("repo.approve_patch", {
-                                    "task_id": task_id,
-                                    "approver": "human:terminal",
-                                    "reason": "Approved via hx run interactive prompt",
-                                })
-                                result["human_approved"] = True
-                            except Exception as exc:
-                                renderer.error(f"Approval failed: {exc}")
-                        else:
-                            result["human_denied"] = True
-                            renderer.error("Change denied by user")
-
-                    renderer.tool_result(real_name, result)
-                    append_event(root, audit_run.run_id, "tool.call", {
-                        "tool": real_name,
-                        "arguments": _safe_args(arguments),
-                    })
-
+                try:
+                    real_name = registry.resolve_api_name(api_name)
+                except KeyError:
+                    renderer.tool_result(api_name, {}, error=f"Unknown tool: {api_name}")
                     tool_results.append({
                         "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(
-                            _compress_tool_result(real_name, result),
-                            default=str,
-                        ),
+                        "tool_use_id": block_id,
+                        "content": json.dumps({"error": f"Unknown tool: {api_name}"}),
+                        "is_error": True,
                     })
+                    continue
 
-                messages.append({"role": "user", "content": tool_results})
+                renderer.tool_start(real_name, arguments)
 
-                # Feedback integrity: check holonomy on affected ports
-                affected_ports = []
-                for block in tool_use_blocks:
-                    name = block.name.replace("_", ".")
-                    if name in ("port.check", "repo.commit_patch"):
-                        args = block.input or {}
-                        if args.get("task_id"):
-                            try:
-                                from hx.repo_ops import load_task
-                                task = load_task(root, args["task_id"])
-                                for p in task.port_check.get(
-                                    "impacted_ports", [],
-                                ):
-                                    affected_ports.append(p.get("port_id"))
-                            except Exception:
-                                pass
-                if affected_ports:
-                    integrity = check_feedback_integrity(
-                        root, affected_ports,
+                try:
+                    result = registry.call(real_name, arguments)
+                except Exception as exc:
+                    error_msg = str(exc)
+                    renderer.tool_result(real_name, {}, error=error_msg)
+                    append_event(root, audit_run.run_id, "tool.error", {
+                        "tool": real_name, "error": error_msg,
+                    })
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block_id,
+                        "content": json.dumps({"error": error_msg}),
+                        "is_error": True,
+                    })
+                    continue
+
+                # Handle approval flow
+                if real_name == "port.check" and result.get("requires_approval"):
+                    reasons = result.get("approval_reasons", ["Breaking change detected"])
+                    approved = renderer.approval_prompt(reasons)
+                    if approved:
+                        task_id = arguments.get("task_id", "")
+                        try:
+                            registry.call("repo.approve_patch", {
+                                "task_id": task_id,
+                                "approver": "human:terminal",
+                                "reason": "Approved via hx run interactive prompt",
+                            })
+                            result["human_approved"] = True
+                        except Exception as exc:
+                            renderer.error(f"Approval failed: {exc}")
+                    else:
+                        result["human_denied"] = True
+                        renderer.error("Change denied by user")
+
+                renderer.tool_result(real_name, result)
+                append_event(root, audit_run.run_id, "tool.call", {
+                    "tool": real_name,
+                    "arguments": _safe_args(arguments),
+                })
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block_id,
+                    "content": json.dumps(
+                        _compress_tool_result(real_name, result),
+                        default=str,
+                    ),
+                })
+
+            messages.append({"role": "user", "content": tool_results})
+
+            # Feedback integrity: check holonomy on affected ports
+            affected_ports = []
+            for block in tool_use_blocks:
+                name = block["name"].replace("_", ".")
+                if name in ("port.check", "repo.commit_patch"):
+                    args = block["input"] or {}
+                    if args.get("task_id"):
+                        try:
+                            from hx.repo_ops import load_task
+                            task = load_task(root, args["task_id"])
+                            for p in task.port_check.get(
+                                "impacted_ports", [],
+                            ):
+                                affected_ports.append(p.get("port_id"))
+                        except Exception:
+                            pass
+            if affected_ports:
+                integrity = check_feedback_integrity(
+                    root, affected_ports,
+                )
+                if integrity:
+                    append_event(
+                        root, audit_run.run_id,
+                        "feedback.integrity_warning",
+                        {"warnings": integrity},
                     )
-                    if integrity:
-                        append_event(
-                            root, audit_run.run_id,
-                            "feedback.integrity_warning",
-                            {"warnings": integrity},
-                        )
 
     except KeyboardInterrupt:
         status = "interrupted"
