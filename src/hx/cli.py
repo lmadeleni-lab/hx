@@ -337,6 +337,57 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_start(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.onboard import render_onboard_result, run_onboard
+
+    prompt = args.prompt
+    language = getattr(args, "language", None)
+    force = getattr(args, "force", False)
+
+    with ui.activity(
+        "Analyzing project requirements",
+        success_message="Project scaffolded",
+    ):
+        result = run_onboard(root, prompt, language=language, force=force)
+
+    print(render_onboard_result(result, color=ui.color))
+    return 0 if not result.errors else 1
+
+
+def cmd_provider_setup(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.wizard import render_wizard_result, run_wizard
+
+    provider = getattr(args, "provider_name", None)
+    non_interactive = getattr(args, "non_interactive", False)
+    skip_validation = getattr(args, "skip_validation", False)
+
+    result = run_wizard(
+        root,
+        provider=provider,
+        non_interactive=non_interactive,
+        skip_validation=skip_validation,
+    )
+    print(render_wizard_result(result, color=ui.color))
+    return 0 if not result.errors else 1
+
+
+def cmd_provider_status(args: argparse.Namespace) -> int:
+    root = repo_root(args.root)
+    ui = TerminalUI(mode=args.ui_mode)
+    from hx.wizard import provider_status, render_provider_status
+
+    status = provider_status(root)
+    if getattr(args, "json", False):
+        print(json.dumps(status, indent=2))
+    else:
+        print(render_provider_status(status, color=ui.color))
+    return 0
+
+
 def cmd_codex_setup(args: argparse.Namespace) -> int:
     root = repo_root(args.root)
     ui = TerminalUI(mode=args.ui_mode)
@@ -1128,6 +1179,50 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--force", action="store_true")
     init_parser.set_defaults(func=cmd_init)
+
+    start_parser = subparsers.add_parser(
+        "start",
+        help="Describe your project and the assistant scaffolds everything",
+    )
+    start_parser.add_argument(
+        "prompt",
+        help="Describe what you want to build (e.g., 'a recipe management web app')",
+    )
+    start_parser.add_argument(
+        "--language", default=None,
+        help="Override auto-detected language (e.g., python, typescript)",
+    )
+    start_parser.add_argument("--force", action="store_true")
+    start_parser.set_defaults(func=cmd_start)
+
+    provider_parser = subparsers.add_parser(
+        "provider", help="Unified LLM provider setup and status",
+    )
+    provider_sub = provider_parser.add_subparsers(
+        dest="provider_command", required=True,
+    )
+    provider_setup = provider_sub.add_parser(
+        "setup", help="Interactive provider setup wizard",
+    )
+    provider_setup.add_argument(
+        "--provider", dest="provider_name", default=None,
+        choices=["anthropic", "openai", "deepseek", "gemini"],
+        help="Pre-select provider (skip menu)",
+    )
+    provider_setup.add_argument(
+        "--non-interactive", action="store_true",
+        help="Run without prompts (requires --provider and env key)",
+    )
+    provider_setup.add_argument(
+        "--skip-validation", action="store_true",
+        help="Skip API key validation",
+    )
+    provider_setup.set_defaults(func=cmd_provider_setup)
+    provider_status_cmd = provider_sub.add_parser(
+        "status", help="Show configured provider status",
+    )
+    provider_status_cmd.add_argument("--json", action="store_true")
+    provider_status_cmd.set_defaults(func=cmd_provider_status)
 
     codex_parser = subparsers.add_parser("codex")
     codex_sub = codex_parser.add_subparsers(dest="codex_command", required=True)
