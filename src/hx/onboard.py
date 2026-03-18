@@ -390,7 +390,7 @@ def _build_plan_steps(
     })
 
     # Core implementation steps — one per non-test cell
-    for i, cell_def in enumerate(cells):
+    for _i, cell_def in enumerate(cells):
         if cell_def["id"] == "tests":
             continue
         steps.append({
