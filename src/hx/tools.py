@@ -465,17 +465,29 @@ class ToolRegistry:
             fn=lambda task_id: commit_patch(base, task_id),
         ))
 
+        def _approve_patch(
+            task_id: str, approver: str, reason: str,
+        ) -> dict[str, Any]:
+            # Only allow approval from verified human sources
+            if not approver.startswith("human:"):
+                raise PermissionError(
+                    "Only human approvers can approve patches. "
+                    "Approval must come from the interactive prompt."
+                )
+            return approve_patch(base, task_id, approver, reason)
+
         self._register(ToolDef(
             name="repo.approve_patch",
-            description="Approve a staged patch that requires human approval.",
+            description=(
+                "Approve a staged patch. Only human:terminal approvals "
+                "are accepted — this tool cannot be self-invoked."
+            ),
             parameters={
                 "task_id": {"type": "string", "description": "Task ID"},
-                "approver": {"type": "string", "description": "Approver identifier"},
+                "approver": {"type": "string", "description": "Must start with 'human:'"},
                 "reason": {"type": "string", "description": "Approval reason"},
             },
-            fn=lambda task_id, approver, reason: approve_patch(
-                base, task_id, approver, reason
-            ),
+            fn=_approve_patch,
         ))
 
         self._register(ToolDef(
@@ -499,13 +511,10 @@ class ToolRegistry:
             fn=lambda task_id: {"files": files_touched(base, task_id)},
         ))
 
-        def _proof_collect(
-            task_id: str, obligations: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
+        def _proof_collect(task_id: str) -> dict[str, Any]:
             policy = load_policy(base)
             task = load_task(base, task_id)
-            if obligations is not None:
-                task.port_check["obligations"] = obligations
+            # Obligations come from port.check, never from LLM input
             proofs = collect_task_proofs(base, policy, task.to_dict())
             task.proofs = proofs
             save_task(base, task)
@@ -516,9 +525,6 @@ class ToolRegistry:
             description="Run required proof checks and collect artifacts.",
             parameters={
                 "task_id": {"type": "string", "description": "Task ID"},
-                "obligations": {
-                    "type": "object", "description": "Override obligations", "optional": True,
-                },
             },
             fn=_proof_collect,
         ))
