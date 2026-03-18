@@ -5,8 +5,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from hx.onboard import (
     ARCHETYPES,
     OnboardResult,
@@ -162,7 +160,6 @@ class TestRunOnboard:
     def test_idempotent_without_force(self, tmp_path: Path) -> None:
         _git_init(tmp_path)
         run_onboard(tmp_path, "build a CLI tool")
-        original = (tmp_path / "HEXMAP.json").read_text()
         result2 = run_onboard(tmp_path, "build a web app")
         # Without force, HEXMAP should not be overwritten
         assert "HEXMAP.json" not in result2.files_written

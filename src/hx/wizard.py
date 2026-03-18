@@ -10,14 +10,9 @@ Login-first interactive wizard that walks users through:
 """
 from __future__ import annotations
 
-import http.server
-import json
 import os
 import shutil
 import subprocess
-import sys
-import threading
-import urllib.parse
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,7 +167,7 @@ def _run_cli_login(cmd: list[str]) -> bool:
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
-        print(f"\n  Login timed out after 5 minutes.")
+        print("\n  Login timed out after 5 minutes.")
         return False
     except FileNotFoundError:
         print(f"\n  {tool_name} not found on PATH.")
@@ -217,13 +212,13 @@ def _run_browser_login(provider: str) -> tuple[str, str]:
         webbrowser.open(login_url)
 
     print("  Complete these steps in your browser:")
-    print(f"    1. Log in (or sign up) at the page that just opened")
+    print("    1. Log in (or sign up) at the page that just opened")
     if keys_url != login_url:
         print(f"    2. Navigate to API keys: {keys_url}")
     else:
-        print(f"    2. Go to API keys after logging in")
-    print(f"    3. Create a new API key")
-    print(f"    4. Copy the key and paste it below")
+        print("    2. Go to API keys after logging in")
+    print("    3. Create a new API key")
+    print("    4. Copy the key and paste it below")
     print()
 
     # Wait a moment for the browser to open, then prompt
@@ -307,7 +302,7 @@ def _authenticate(provider: str) -> tuple[str, str]:
             # CLI login succeeded but key not in env — user may need
             # to separately get an API key for hx's direct LLM calls
             print(f"\n  {cli_cmd[0]} login succeeded!")
-            print(f"  For hx direct agent mode, you also need an API key.")
+            print("  For hx direct agent mode, you also need an API key.")
             return _run_browser_login(provider)
         else:
             print("\n  CLI login was not completed. Falling back to browser login.")
@@ -557,7 +552,7 @@ def run_wizard(
     # Step 3: Model selection
     if not non_interactive:
         model = _prompt(
-            f"\n  Model to use", config["default_model"],
+            "\n  Model to use", config["default_model"],
         )
         result.model = model
 
@@ -586,7 +581,7 @@ def run_wizard(
         os.environ[config["env_key"]] = api_key
         if not non_interactive:
             print(f"\n  Set {config['env_key']} for this session.")
-            print(f"  To persist, add to your shell profile:")
+            print("  To persist, add to your shell profile:")
             print(f"    export {config['env_key']}='{api_key[:8]}...'")
 
     # Step 6: Write provider config

@@ -1,11 +1,8 @@
 """Tests for the unified provider setup wizard."""
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from hx.providers import PROVIDERS
 from hx.wizard import (

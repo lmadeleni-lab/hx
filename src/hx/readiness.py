@@ -227,7 +227,7 @@ def check_readiness(root: Path) -> dict[str, Any]:
         "ok": False,
         "detail": {},
     }
-    from hx.wizard import load_provider_config, provider_status
+    from hx.wizard import provider_status
     prov_status = provider_status(root)
     provider_check["detail"]["active_provider"] = prov_status["active_provider"]
     provider_check["detail"]["config_exists"] = prov_status["config_exists"]
