@@ -273,10 +273,9 @@ def _build_hexmap_from_archetype(
             for neighbor_id, side in neighbors_map[cell_id].items():
                 neighbor_list[side] = neighbor_id
                 port_list[side] = Port(
-                    direction=["N", "NE", "SE", "S", "SW", "NW"][side],
+                    port_id=f"{cell_id}:{neighbor_id}:{side}",
+                    direction="bidirectional",
                     neighbor_cell_id=neighbor_id,
-                    contract=f"Interface between {cell_id} and {neighbor_id}",
-                    surface=[],
                 )
 
         cells.append(Cell(
